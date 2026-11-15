@@ -12,6 +12,12 @@ A fast, keyboard-driven menu-bar search for **Apple Notes** on macOS 14+.
 - **Per-note global hotkeys**: assign one from the preview pane or in Settings → Note Hotkeys.
 - **Launch at login**, plus a detailed Settings window.
 
+## Install
+
+Download `QuickNoteSearch-<version>.dmg` from [Releases](https://github.com/giridharmb/QuickNoteSearch/releases), open it and drag **QuickNoteSearch** to **Applications**. The app is signed with Developer ID and notarized by Apple.
+
+On first launch, grant **Full Disk Access** when asked (see [Permissions](#permissions)).
+
 ## Build
 
 Requires Xcode 15+ / Swift 5.10+.
@@ -20,7 +26,11 @@ Requires Xcode 15+ / Swift 5.10+.
 ./scripts/build_app.sh            # → build/QuickNoteSearch.app
 ./scripts/build_app.sh --install  # also copies to /Applications and launches
 swift test                        # unit tests (decoder, schema, search)
+./scripts/make_dmg.sh             # Developer ID–signed build/QuickNoteSearch-<version>.dmg
+NOTARY_PROFILE=<profile> ./scripts/make_dmg.sh   # …also notarized and stapled
 ```
+
+`make_dmg.sh` needs a *Developer ID Application* certificate. For notarization, first save your credentials once with `xcrun notarytool store-credentials <profile>`.
 
 If an *Apple Development* or *Developer ID* certificate is in your keychain, the app is signed with it, so the Full Disk Access grant survives rebuilds. Otherwise it is signed ad-hoc and you must re-grant access after every rebuild. Set `SIGN_ID` to choose a specific identity.
 

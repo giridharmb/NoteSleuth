@@ -15,7 +15,10 @@ cp Support/Info.plist "$APP/Contents/"
 cp Support/AppIcon.icns "$APP/Contents/Resources/"
 
 SIGN_ID="${SIGN_ID:-$(security find-identity -v -p codesigning 2>/dev/null | awk '/Apple Development|Developer ID Application/ {print $2; exit}' || true)}"
-codesign --force --sign "${SIGN_ID:--}" "$APP"
+# Hardened runtime + secure timestamp are required for notarization; skipped for ad-hoc builds.
+RUNTIME=()
+[ -n "$SIGN_ID" ] && RUNTIME=(--options runtime --timestamp --entitlements Support/QuickNoteSearch.entitlements)
+codesign --force "${RUNTIME[@]}" --sign "${SIGN_ID:--}" "$APP"
 echo "Built $APP (signed: ${SIGN_ID:-ad-hoc})"
 
 if [ "${1:-}" = "--install" ]; then
