@@ -61,13 +61,15 @@ struct SearchOptions {
     var recent: Set<String> = []
 }
 
-/// Query syntax: words are fuzzy-matched (AND); `#a #b` = both tags; `#a|#b` = either; `-#c` = exclude.
+/// Query syntax: words are fuzzy-matched (AND); `#a #b` = both tags; `#a|#b` = either; `-#c` = exclude;
+/// `in:work` = only folders whose name starts with "work" (several `in:` = any of them).
 struct Query: Equatable {
     var terms: [String] = []
     var tagGroups: [[String]] = []
     var excludedTags: [String] = []
+    var folders: [String] = []
 
-    var isEmpty: Bool { terms.isEmpty && tagGroups.isEmpty && excludedTags.isEmpty }
+    var isEmpty: Bool { terms.isEmpty && tagGroups.isEmpty && excludedTags.isEmpty && folders.isEmpty }
     var allTags: [String] { tagGroups.flatMap { $0 } }
 
     static func parse(_ text: String) -> Query {
@@ -78,6 +80,9 @@ struct Query: Equatable {
             } else if token.hasPrefix("#") {
                 let group = tags(in: token)
                 if !group.isEmpty { q.tagGroups.append(group) }
+            } else if token.lowercased().hasPrefix("in:") {
+                let f = String(token.dropFirst(3)).folded
+                if !f.isEmpty { q.folders.append(f) }
             } else {
                 let t = String(token).folded
                 if !t.isEmpty { q.terms.append(t) }
@@ -132,6 +137,10 @@ struct SearchIndex {
         if !q.excludedTags.isEmpty {
             let m = tagMask(q.excludedTags)
             for i in 0..<n where m[i] { allowed[i] = false }
+        }
+        if !q.folders.isEmpty {
+            let prefixes = q.folders.map { Array($0.utf8) }
+            for i in 0..<n where allowed[i] && !prefixes.contains(where: notes[i].folderKey.starts) { allowed[i] = false }
         }
 
         let terms = q.terms.map { Array($0.utf8) }

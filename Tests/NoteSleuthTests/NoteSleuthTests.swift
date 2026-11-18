@@ -1,7 +1,7 @@
 import XCTest
-@testable import QuickNoteSearch
+@testable import NoteSleuth
 
-final class QuickNoteSearchTests: XCTestCase {
+final class NoteSleuthTests: XCTestCase {
     // MARK: Fixtures
 
     private func ld(_ field: Int, _ payload: [UInt8]) -> [UInt8] {
@@ -45,6 +45,10 @@ final class QuickNoteSearchTests: XCTestCase {
         XCTAssertEqual(NoteDecoder.text(from: try noteBlob(text)), "Grocery list\nmilk, eggs, café ☕️ ") // placeholder dropped
         XCTAssertNil(NoteDecoder.text(from: Data([0x1f, 0x8b, 1, 2, 3])))
         XCTAssertNil(NoteDecoder.text(from: Data()))
+        // Older notes are zlib-framed: 78 9c + raw deflate + adler32 (not checked).
+        let proto = Data(ld(2, ld(3, ld(2, Array("Old note".utf8)))))
+        let zlib = Data([0x78, 0x9c]) + (try (proto as NSData).compressed(using: .zlib) as Data) + Data([0, 0, 0, 0])
+        XCTAssertEqual(NoteDecoder.text(from: zlib), "Old note")
     }
 
     private func vi(_ field: Int, _ v: Int) -> [UInt8] {
@@ -86,6 +90,7 @@ final class QuickNoteSearchTests: XCTestCase {
         XCTAssertEqual(q.tagGroups, [["work", "home"], ["urgent"]])
         XCTAssertEqual(q.excludedTags, ["archive"])
         XCTAssertTrue(Query.parse("  # ").isEmpty)
+        XCTAssertEqual(Query.parse("IN:Wörk in: x").folders, ["work"])
     }
 
     func testEditDistance() {
@@ -102,7 +107,7 @@ final class QuickNoteSearchTests: XCTestCase {
             note("Grocery list", "milk eggs bread", tags: ["home"]),
             note("Meeting notes", "discuss grocery budget", tags: ["work", "urgent"]),
             note("Trip plan", "flights hotel", tags: ["travel"], daysAgo: 300),
-            note("Old work", "archive me", tags: ["work", "archive"]),
+            note("Old work", "archive me", tags: ["work", "archive"], folder: "Archive"),
         ])
         let o = SearchOptions()
         XCTAssertEqual(idx.search(.parse("grocery"), o).map(\.title), ["Grocery list", "Meeting notes"]) // title beats body
@@ -115,6 +120,8 @@ final class QuickNoteSearchTests: XCTestCase {
         XCTAssertEqual(idx.search(.parse("#work #urgent"), o).map(\.title), ["Meeting notes"])
         XCTAssertEqual(idx.search(.parse("#trav"), o).map(\.title), ["Trip plan"])                       // tag prefix
         XCTAssertTrue(idx.search(.parse("zzzz"), o).isEmpty)
+        XCTAssertEqual(idx.search(.parse("#work in:arch"), o).map(\.title), ["Old work"])                // folder filter
+        XCTAssertEqual(idx.search(.parse("in:notes in:arch"), o).count, 4)                               // folders ORed
         XCTAssertEqual(idx.search(.parse("hotle"), SearchOptions(typoTolerance: false)).count, 0)
         XCTAssertEqual(idx.search(.parse("milk"), SearchOptions(searchBody: false)).count, 0)
     }

@@ -163,7 +163,7 @@ struct Span: Equatable {
     var style = TextStyle()
 }
 
-/// Decodes ZICNOTEDATA.ZDATA: gzip → protobuf NoteStoreProto(2) → Document(3) → Note(2 text, 5 attribute runs).
+/// Decodes ZICNOTEDATA.ZDATA: gzip (older notes: zlib) → protobuf NoteStoreProto(2) → Document(3) → Note(2 text, 5 attribute runs).
 enum NoteDecoder {
     static func text(from data: Data) -> String? {
         spans(from: data, altText: [:]).map { $0.map(\.text).joined() }
@@ -172,7 +172,8 @@ enum NoteDecoder {
     /// `altText` maps inline-attachment identifiers (hashtags, mentions) to their visible text.
     static func spans(from data: Data, altText: [String: String]) -> [Span]? {
         let bytes = [UInt8](data)
-        guard let raw = bytes.starts(with: [0x1f, 0x8b]) ? gunzip(bytes) : bytes,
+        let isZlib = bytes.count > 6 && bytes[0] == 0x78 && (Int(bytes[0]) << 8 | Int(bytes[1])) % 31 == 0
+        guard let raw = bytes.starts(with: [0x1f, 0x8b]) ? gunzip(bytes) : isZlib ? inflate(bytes[2..<(bytes.count - 4)]) : bytes,
               let note = Proto(raw)?.message(2)?.message(3), let textBytes = note.bytes[2]?.first
         else { return nil }
         let text = String(decoding: textBytes, as: UTF8.self) as NSString
@@ -233,8 +234,12 @@ enum NoteDecoder {
         if flags & 16 != 0 { while i < b.count && b[i] != 0 { i += 1 }; i += 1 }
         if flags & 2 != 0 { i += 2 }
         guard i < b.count - 8 else { return nil }
-        // NSData's .zlib is raw deflate, so strip the gzip header and 8-byte trailer.
-        guard let out = try? (Data(b[i..<(b.count - 8)]) as NSData).decompressed(using: .zlib) else { return nil }
+        return inflate(b[i..<(b.count - 8)]) // strip the gzip header and 8-byte trailer
+    }
+
+    /// NSData's .zlib is raw deflate (no zlib/gzip framing).
+    static func inflate(_ b: ArraySlice<UInt8>) -> [UInt8]? {
+        guard let out = try? (Data(b) as NSData).decompressed(using: .zlib) else { return nil }
         return [UInt8](out as Data)
     }
 }

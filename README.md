@@ -1,34 +1,42 @@
-# QuickNoteSearch
+# NoteSleuth
 
-A fast, keyboard-driven menu-bar search for **Apple Notes** on macOS 14+.
+A fast, keyboard-driven menu-bar search for **Apple Notes** on macOS 14+ (Apple silicon and Intel). Formerly QuickNoteSearch.
 
-<img src="Support/icon.png" width="128" alt="QuickNoteSearch icon">
+<img src="Support/icon.png" width="128" alt="NoteSleuth icon">
 
 - **Instant fuzzy search** over titles, folders and note bodies: prefix matching, one-typo tolerance, fuzzy title matching. Searches run in parallel across all CPU cores (~20 ms for 10,000 notes).
 - **Hashtags**: `#work #urgent` (both), `#work|#home` (either), `-#archive` (exclude). Press ⇥ to autocomplete tags.
+- **Folder filter**: `in:work` limits results to folders whose name starts with "work".
 - **Live index** that stays in sync. It watches the Notes database with FSEvents, re-reads only the notes that changed, and is throttled so it stays idle when nothing changes.
 - **Popup on a global hotkey** (default ⌥Space, configurable), with a preview pane that highlights matches.
 - **Favourites** (⌘D), **recently opened** notes, **recent hashtags**, **bookmarked searches** (⌘S).
 - **Per-note global hotkeys**: assign one from the preview pane or in Settings → Note Hotkeys.
 - **Launch at login**, plus a detailed Settings window.
+- **Automatic updates** through [Sparkle](https://sparkle-project.org).
+
+## Privacy
+
+Your notes never leave your Mac. NoteSleuth opens the Notes database read-only and keeps its search index in memory; nothing is written to disk except your favourites, history, bookmarks and hotkeys, which are stored as note IDs. The only network request is the update check against this repository's `appcast.xml`, which sends nothing about your notes. **Settings → General → Copy Diagnostics** copies counts only (no titles or text) for problem reports.
 
 ## Install
 
-Download `QuickNoteSearch-<version>.dmg` from [Releases](https://github.com/giridharmb/QuickNoteSearch/releases), open it and drag **QuickNoteSearch** to **Applications**. The app is signed with Developer ID and notarized by Apple.
+Download `NoteSleuth-<version>.dmg` from [Releases](https://github.com/giridharmb/NoteSleuth/releases), open it and drag **NoteSleuth** to **Applications**. The app is signed with Developer ID and notarized by Apple.
 
-On first launch, grant **Full Disk Access** when asked (see [Permissions](#permissions)).
+On first launch, a welcome window walks you through granting **Full Disk Access** (see [Permissions](#permissions)). Updates install automatically, or use **Check for Updates…** in the menu bar menu.
 
 ## Build
 
 Requires Xcode 15+ / Swift 5.10+.
 
 ```bash
-./scripts/build_app.sh            # → build/QuickNoteSearch.app
+./scripts/build_app.sh            # → build/NoteSleuth.app
 ./scripts/build_app.sh --install  # also copies to /Applications and launches
 swift test                        # unit tests (decoder, schema, search)
-./scripts/make_dmg.sh             # Developer ID–signed build/QuickNoteSearch-<version>.dmg
-NOTARY_PROFILE=<profile> ./scripts/make_dmg.sh   # …also notarized and stapled
+./scripts/make_dmg.sh             # Developer ID–signed build/NoteSleuth-<version>.dmg
+NOTARY_PROFILE=<profile> ./scripts/make_dmg.sh   # …also notarized, stapled, and appcast.xml regenerated
 ```
+
+Builds are universal (arm64 + x86_64). Releases: bump the version in `Support/Info.plist`, run `make_dmg.sh` with `NOTARY_PROFILE`, upload the DMG to a `v<version>` GitHub release, then commit `appcast.xml`. The appcast is signed with a Sparkle EdDSA key kept in your keychain under the account `QuickNoteSearch` (create it once with `.build/artifacts/sparkle/Sparkle/bin/generate_keys --account QuickNoteSearch`, and back it up: without it you can't ship updates to existing installs).
 
 `make_dmg.sh` needs a *Developer ID Application* certificate. For notarization, first save your credentials once with `xcrun notarytool store-credentials <profile>`.
 
@@ -62,3 +70,7 @@ If an *Apple Development* or *Developer ID* certificate is in your keychain, the
 The index lives **in memory only**. Writing note contents to a cache file would expose them to apps that don't have Full Disk Access. Favourites, history, bookmarks and hotkeys are stored in UserDefaults as note IDs only.
 
 Limitations: the contents of locked (password-protected) notes are encrypted, so only their titles are searchable. The app never edits notes.
+
+## License
+
+[MIT](LICENSE)

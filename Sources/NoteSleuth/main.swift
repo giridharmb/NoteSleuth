@@ -1,5 +1,6 @@
 import AppKit
 import Combine
+import Sparkle
 import SwiftUI
 
 final class PopupPanel: NSPanel {
@@ -14,6 +15,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var statusItem: NSStatusItem!
     private var panel: PopupPanel!
     private var settingsWindow: NSWindow?
+    private var welcomeWindow: NSWindow?
+    let updater = SPUStandardUpdaterController(startingUpdater: true, updaterDelegate: nil, userDriverDelegate: nil)
     private var keyMonitor: Any?
     private var bag: Set<AnyCancellable> = []
 
@@ -33,7 +36,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
 
         store.start()
-        if !NotesReader.hasAccess { showSettings(tab: "index") }
+        if !NotesReader.hasAccess || !UserDefaults.standard.bool(forKey: "welcomed") { showWelcome() }
     }
 
     // MARK: Hotkeys
@@ -43,7 +46,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let hk = HotKeyCenter.shared
         hk.unregisterAll()
         if !hk.register(user.popupShortcut, action: { [weak self] in self?.togglePopup() }) {
-            NSLog("QuickNoteSearch: popup hotkey %@ is taken by another app", user.popupShortcut.display)
+            NSLog("NoteSleuth: popup hotkey %@ is taken by another app", user.popupShortcut.display)
         }
         for item in user.noteHotkeys {
             hk.register(item.shortcut) { [weak self] in self?.openNote(id: item.noteID) }
@@ -61,7 +64,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     private func setUpStatusItem() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
-        statusItem.button?.image = NSImage(systemSymbolName: "doc.text.magnifyingglass", accessibilityDescription: "QuickNoteSearch")
+        statusItem.button?.image = NSImage(systemSymbolName: "doc.text.magnifyingglass", accessibilityDescription: "NoteSleuth")
         let menu = NSMenu()
         let search = NSMenuItem(title: "Search Notes", action: #selector(togglePopup), keyEquivalent: "")
         search.tag = 1
@@ -69,9 +72,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "Settings…", action: #selector(openSettings), keyEquivalent: ","))
         menu.addItem(NSMenuItem(title: "Rebuild Index", action: #selector(rebuildIndex), keyEquivalent: ""))
+        let update = NSMenuItem(title: "Check for Updates…", action: #selector(SPUStandardUpdaterController.checkForUpdates(_:)), keyEquivalent: "")
+        update.target = updater
         menu.addItem(.separator())
-        menu.addItem(NSMenuItem(title: "Quit QuickNoteSearch", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
+        menu.addItem(NSMenuItem(title: "Quit NoteSleuth", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
         menu.items.forEach { if $0.action != #selector(NSApplication.terminate(_:)) { $0.target = self } }
+        menu.insertItem(update, at: menu.items.count - 2)
         statusItem.menu = menu
     }
 
@@ -130,13 +136,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if (n.object as? NSWindow) === panel, !ShortcutRecorder.isRecording { panel.orderOut(nil) }
     }
 
+    // MARK: Welcome
+
+    private func showWelcome() {
+        if welcomeWindow == nil {
+            let view = WelcomeView(store: store, user: user) { [weak self] in
+                UserDefaults.standard.set(true, forKey: "welcomed")
+                self?.welcomeWindow?.close()
+            }
+            let w = NSWindow(contentViewController: NSHostingController(rootView: view))
+            w.title = "Welcome"
+            w.styleMask = [.titled, .closable]
+            w.isReleasedWhenClosed = false
+            w.center()
+            welcomeWindow = w
+        }
+        NSApp.activate(ignoringOtherApps: true)
+        welcomeWindow?.makeKeyAndOrderFront(nil)
+    }
+
     // MARK: Settings
 
     private func showSettings(tab: String) {
         UserDefaults.standard.set(tab, forKey: "settingsTab")
         if settingsWindow == nil {
-            let w = NSWindow(contentViewController: NSHostingController(rootView: SettingsView(store: store, user: user)))
-            w.title = "QuickNoteSearch Settings"
+            let w = NSWindow(contentViewController: NSHostingController(rootView: SettingsView(store: store, user: user, updater: updater.updater)))
+            w.title = "NoteSleuth Settings"
             w.styleMask = [.titled, .closable, .miniaturizable]
             w.isReleasedWhenClosed = false
             w.center()
@@ -145,6 +170,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         NSApp.activate(ignoringOtherApps: true)
         settingsWindow?.makeKeyAndOrderFront(nil)
     }
+}
+
+// `open -a NoteSleuth --args --diagnose <file>` writes the diagnostics report and quits (used to test real libraries).
+if let i = CommandLine.arguments.firstIndex(of: "--diagnose"), i + 1 < CommandLine.arguments.count {
+    try? Diagnostics.report().write(toFile: CommandLine.arguments[i + 1], atomically: true, encoding: .utf8)
+    exit(0)
+}
+
+// One-time copy of settings, favourites and hotkeys from before the app was renamed (must run before UserStore loads).
+let defaults = UserDefaults.standard
+if !defaults.bool(forKey: "migratedFromQuickNoteSearch") {
+    for (k, v) in defaults.persistentDomain(forName: "io.github.giridharmb.QuickNoteSearch") ?? [:] where defaults.object(forKey: k) == nil {
+        defaults.set(v, forKey: k)
+    }
+    defaults.set(true, forKey: "migratedFromQuickNoteSearch")
 }
 
 let app = NSApplication.shared

@@ -1,25 +1,30 @@
-import SwiftUI
 import ServiceManagement
+import Sparkle
+import SwiftUI
 
 struct SettingsView: View {
     @ObservedObject var store: NoteIndexStore
     @ObservedObject var user: UserStore
+    let updater: SPUUpdater
     @AppStorage("settingsTab") private var tab = "general"
 
     var body: some View {
         TabView(selection: $tab) {
-            GeneralSettings(user: user).tabItem { Label("General", systemImage: "gearshape") }.tag("general")
+            GeneralSettings(user: user, updater: updater).tabItem { Label("General", systemImage: "gearshape") }.tag("general")
             SearchSettings().tabItem { Label("Search", systemImage: "magnifyingglass") }.tag("search")
             HotkeySettings(store: store, user: user).tabItem { Label("Note Hotkeys", systemImage: "keyboard") }.tag("hotkeys")
             LibrarySettings(store: store, user: user).tabItem { Label("Library", systemImage: "star") }.tag("library")
             IndexSettings(store: store).tabItem { Label("Index", systemImage: "externaldrive.badge.checkmark") }.tag("index")
         }
-        .frame(width: 600, height: 470)
+        .frame(width: 600, height: 520)
     }
 }
 
 private struct GeneralSettings: View {
     @ObservedObject var user: UserStore
+    let updater: SPUUpdater
+    @State private var autoUpdate = true
+    @State private var copied = false
     @AppStorage(Pref.showPreview) private var showPreview = true
     @AppStorage(Pref.clearOnOpen) private var clearOnOpen = true
     @AppStorage(Pref.defaultTab) private var defaultTab = "Recent"
@@ -29,7 +34,7 @@ private struct GeneralSettings: View {
     var body: some View {
         Form {
             Section {
-                Toggle("Launch QuickNoteSearch at login", isOn: $launchAtLogin)
+                Toggle("Launch NoteSleuth at login", isOn: $launchAtLogin)
                     .onChange(of: launchAtLogin) { _, on in
                         do {
                             if on { try SMAppService.mainApp.register() } else { try SMAppService.mainApp.unregister() }
@@ -56,8 +61,35 @@ private struct GeneralSettings: View {
                 Text("↑ ↓ / ⌃N ⌃P move · ↩ open in Notes · ⌘↩ copy text · ⇥ complete #tag · ⌘D favourite · ⌘S bookmark search · ⌘1/2/3 Recent/Favourites/All · ⎋ clear/close · ⌘, settings")
                     .font(.callout).foregroundStyle(.secondary)
             }
+            Section("Updates") {
+                Toggle("Check for updates automatically", isOn: $autoUpdate)
+                    .onChange(of: autoUpdate) { _, on in updater.automaticallyChecksForUpdates = on }
+                Button("Check Now") { updater.checkForUpdates() }
+            }
+            Section("About") {
+                LabeledContent("Version", value: Diagnostics.appVersion)
+                HStack {
+                    Link("Project Page", destination: URL(string: "https://github.com/giridharmb/NoteSleuth")!)
+                    Link("Report a Problem", destination: URL(string: "https://github.com/giridharmb/NoteSleuth/issues/new")!)
+                    Spacer()
+                    Button(copied ? "Copied" : "Copy Diagnostics") {
+                        DispatchQueue.global(qos: .userInitiated).async {
+                            let text = Diagnostics.report()
+                            DispatchQueue.main.async {
+                                NSPasteboard.general.clearContents()
+                                NSPasteboard.general.setString(text, forType: .string)
+                                copied = true
+                            }
+                        }
+                    }
+                    .help("Copies counts only (no note titles or text) to paste into a problem report")
+                }
+                Text("Your notes never leave this Mac. The only network request is the update check, which sends nothing about your notes.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
         }
         .formStyle(.grouped)
+        .onAppear { autoUpdate = updater.automaticallyChecksForUpdates }
     }
 }
 
@@ -81,6 +113,7 @@ private struct SearchSettings: View {
                     Text("`#work #urgent` — notes with both tags")
                     Text("`#work|#home` — notes with either tag")
                     Text("`-#archive` — exclude a tag")
+                    Text("`in:work` — only folders whose name starts with “work”")
                     Text("`#wor` — unknown tags match by prefix; press ⇥ to complete")
                 }
                 .font(.callout)
@@ -190,7 +223,7 @@ private struct IndexSettings: View {
                     }
                 }
                 if store.status.needsAccess {
-                    Text("Apple Notes keeps its database in a protected folder. Open Privacy & Security → Full Disk Access, add QuickNoteSearch, then press Check Again.")
+                    Text("Apple Notes keeps its database in a protected folder. Open Privacy & Security → Full Disk Access, add NoteSleuth, then press Check Again.")
                         .font(.callout).foregroundStyle(.secondary)
                     HStack {
                         Button("Open Full Disk Access Settings") {

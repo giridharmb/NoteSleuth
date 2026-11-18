@@ -17,7 +17,7 @@ final class NoteIndexStore: ObservableObject {
     @Published private(set) var status = Status()
     @Published private(set) var storeUUID = ""
 
-    private let queue = DispatchQueue(label: "QuickNoteSearch.index", qos: .utility)
+    private let queue = DispatchQueue(label: "NoteSleuth.index", qos: .utility)
     // Queue-confined state.
     private var notes: [Int64: Note] = [:]
     private var stamps: [Int64: NotesReader.Stamp] = [:]

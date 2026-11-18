@@ -260,5 +260,5 @@ extension Note {
 }
 
 extension Notification.Name {
-    static let popupDidShow = Notification.Name("QuickNoteSearch.popupDidShow")
+    static let popupDidShow = Notification.Name("NoteSleuth.popupDidShow")
 }
