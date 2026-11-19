@@ -58,7 +58,7 @@ private struct GeneralSettings: View {
                 }
             }
             Section("Keys in the popup") {
-                Text("↑ ↓ / ⌃N ⌃P move · ↩ open in Notes · ⌘↩ copy text · ⇥ complete #tag · ⌘D favourite · ⌘S bookmark search · ⌘L copy link · ⌘R sort · ⌘G / ⇧⌘G next / previous match · ↑ in an empty box recalls earlier searches · ⌘1–4 Recent/Favourites/All/Tags · ⎋ clear/close · ⌘, settings")
+                Text("↑ ↓ / ⌃N ⌃P move · ↩ open in Notes · ⌘↩ copy text · ⇥ complete #tag · ⌘D favourite · ⌘S bookmark search · ⌘L copy link · ⇧⌘C copy as Markdown · ⌘N new note from what you typed · ⌘P compact / full popup · ⌘R sort · ⌘G / ⇧⌘G next / previous match · ↑ in an empty box recalls earlier searches · ⌘1–4 Recent/Favourites/All/Tags · ⎋ clear/close · ⌘, settings")
                     .font(.callout).foregroundStyle(.secondary)
             }
             Section("Updates") {
@@ -84,6 +84,8 @@ private struct GeneralSettings: View {
                     }
                     .help("Copies counts only (no note titles or text) to paste into a problem report")
                 }
+                Text("Other apps can start a search with a link such as notesleuth://search?q=budget (use the Open URL action in Shortcuts).")
+                    .font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
                 Text("Your notes never leave this Mac. The only network request is the update check, which sends nothing about your notes.")
                     .font(.caption).foregroundStyle(.secondary)
             }
@@ -118,6 +120,7 @@ private struct SearchSettings: View {
                     Text("`\"project plan\"` — those exact words together")
                     Text("`in:work` — only folders or accounts whose name starts with “work”")
                     Text("`is:todo` — notes with an unticked checklist item")
+                    Text("`edited:7d` (also `w`, `m`, `y`) · `after:2025-06` · `before:2025-06-15` — by last edit")
                     Text("`#wor` — unknown tags match by prefix; press ⇥ to complete")
                 }
                 .font(.callout)

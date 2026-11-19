@@ -21,6 +21,7 @@ final class PopupModel: ObservableObject {
     let user: UserStore
     var onClose: () -> Void = {}
     var onOpenSettings: () -> Void = {}
+    var onToggleCompact: () -> Void = {}
     private var generation = 0
     private var bag: Set<AnyCancellable> = []
 
@@ -53,7 +54,8 @@ final class PopupModel: ObservableObject {
             switch tab {
             case .recent: results = user.history.compactMap(index.note(id:))
             case .favorites: results = user.favorites.compactMap(index.note(id:))
-            case .all: results = Array(index.notes.prefix(max(limit, 20)))
+            case .all: // pinned first, as in Notes; each group newest first
+                results = Array((index.notes.filter(\.pinned) + index.notes.filter { !$0.pinned }).prefix(max(limit, 20)))
             case .tags: results = [] // the view shows the tag browser instead
             }
             restoreSelection(keepID)
@@ -118,6 +120,24 @@ final class PopupModel: ObservableObject {
         user.recordOpen(note.id, tags: parsed.allTags)
         user.recordQuery(query)
         NotesOpener.open(note, storeUUID: store.storeUUID)
+        onClose()
+    }
+
+    func copyMarkdown(_ note: Note? = nil) {
+        guard let note = note ?? selectedNote, !note.locked else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(NoteFormatter.markdown(note.spans), forType: .string)
+        show("Copied “\(note.title)” as Markdown")
+    }
+
+    /// ⌘N: a new note titled with the plain words typed so far (filters like #tag and in: are left out).
+    func newNote() {
+        let q = parsed
+        let title = (q.phrases + q.terms).isEmpty ? "New Note"
+            : Query.tokens(query).map(\.text).filter { t in
+                !["#", "-#"].contains { t.hasPrefix($0) } && !["in:", "is:", "edited:", "before:", "after:"].contains { t.lowercased().hasPrefix($0) }
+            }.joined(separator: " ").replacingOccurrences(of: "\"", with: "")
+        NotesOpener.create(title: title)
         onClose()
     }
 
@@ -208,6 +228,9 @@ final class PopupModel: ObservableObject {
         case "d": toggleFavorite()
         case "s": saveSearch()
         case "l": copyLink()
+        case "C": copyMarkdown()
+        case "n": newNote()
+        case "p": onToggleCompact()
         case "r": toggleSort()
         case "g": matchStep += 1
         case "G": matchStep -= 1
@@ -227,10 +250,10 @@ enum NotesOpener {
     private static func failed(_ message: String) {
         let denied = message.contains("-1743")
         let a = NSAlert()
-        a.messageText = denied ? "NoteSleuth isn’t allowed to control Notes" : "Couldn’t open that note"
+        a.messageText = denied ? "NoteSleuth isn’t allowed to control Notes" : "Notes couldn’t do that"
         a.informativeText = denied
             ? "Opening a note needs permission to control Notes. Turn on Notes under NoteSleuth in Privacy & Security → Automation."
-            : "Notes didn’t show the note. It may have been deleted or moved since the last sync."
+            : "Notes didn’t show or create the note. It may have been deleted or moved since the last sync."
         a.addButton(withTitle: denied ? "Open Automation Settings" : "Open Notes")
         a.addButton(withTitle: "Cancel")
         NSApp.activate(ignoringOtherApps: true)
@@ -245,17 +268,33 @@ enum NotesOpener {
             NSWorkspace.shared.open(URL(fileURLWithPath: "/System/Applications/Notes.app"))
             return
         }
-        let script = """
+        run("""
             tell application "Notes"
                 show note id "x-coredata://\(storeUUID)/ICNote/p\(note.pk)"
                 activate
             end tell
-            """
+            """)
+    }
+
+    /// Creates a note in Notes' default folder and shows it. The title travels as an argument,
+    /// never inside the script source, so it cannot be interpreted as AppleScript.
+    static func create(title: String) {
+        run("""
+            on run argv
+                tell application "Notes"
+                    show (make new note with properties {name:(item 1 of argv)})
+                    activate
+                end tell
+            end run
+            """, [title])
+    }
+
+    private static func run(_ script: String, _ args: [String] = []) {
         // Off the main thread: the first call waits on the Automation permission prompt.
         DispatchQueue.global(qos: .userInitiated).async {
             let p = Process()
             p.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
-            p.arguments = ["-e", script]
+            p.arguments = ["-e", script] + args
             let err = Pipe()
             p.standardError = err
             try? p.run()

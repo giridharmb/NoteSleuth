@@ -62,7 +62,7 @@ enum Diagnostics {
                 "Notes (excluding deleted): \(stamps.count), rows read: \(raws.count)",
                 "Folders: \(Set(stamps.values.map(\.folder)).count), accounts: \(Set(stamps.values.map(\.account)).count), notes without account: \(stamps.values.filter { $0.account.isEmpty }.count)",
                 "Tables with text: \(tables.count), cells: \(tables.values.map(\.count).reduce(0, +)), tables matched to a note: \(tablesPlaced)",
-                "Notes with open to-dos: \(todos)",
+                "Notes with open to-dos: \(todos), pinned: \(stamps.values.filter(\.pinned).count)",
                 "Locked: \(locked), no body: \(noData), decode failed: \(failed), empty: \(empty)",
                 "Attachments: \(attachments), notes with hashtags: \(tags.count), distinct hashtags: \(Set(tags.values.joined()).count)",
                 "Decode failures (header, size, gunzip): " + (failHeads.isEmpty ? "none" : failHeads.map { "\($0.key)×\($0.value)" }.sorted().joined(separator: "; ")),

@@ -93,6 +93,11 @@ final class NoteSleuthTests: XCTestCase {
         XCTAssertEqual(idx.search(.parse("in:icl"), SearchOptions()).map(\.id), ["b"]) // in: also matches the account
         XCTAssertTrue(idx.multipleAccounts)
 
+        XCTAssertEqual(NoteFormatter.markdown(spans), "# Plan\n**Buy** #groceries milk\n- [x] Done\n1. Step\nPic [🖼 Image]")
+        let md = NoteFormatter.markdown([Span(text: "let x = 1\nprint(x)\n", style: TextStyle(paragraph: 4)),
+                                         Span(text: "see ", style: TextStyle(quote: true)), Span(text: "docs", style: TextStyle(italic: true, link: "https://a.b"))])
+        XCTAssertEqual(md, "```\nlet x = 1\nprint(x)\n```\n> see [*docs*](https://a.b)")
+
         let lines = NoteFormatter.renderLines(spans, highlight: ["milk"], skipTitle: "Plan")
         XCTAssertEqual(lines.map(\.hit), [true, false, false, false])
 
@@ -115,6 +120,13 @@ final class NoteSleuthTests: XCTestCase {
         XCTAssertEqual(p.folders, ["my folder"])
         XCTAssertTrue(p.todoOnly)
         XCTAssertEqual(p.highlights, ["milk", "project plan", "open"])
+
+        let now = Date(timeIntervalSince1970: 1_700_000_000)
+        let d = Query.parse("edited:2w before:2025-06 x", now: now)
+        XCTAssertEqual(d.after, Calendar.current.date(byAdding: .weekOfYear, value: -2, to: now))
+        XCTAssertEqual(d.before, Calendar.current.date(from: DateComponents(year: 2025, month: 6, day: 1)))
+        XCTAssertEqual(d.terms, ["x"])
+        XCTAssertEqual(Query.parse("after:2025-02-30 edited:soon before:99").terms, ["after:2025-02-30", "edited:soon", "before:99"]) // invalid dates stay words
     }
 
     func testEditDistance() {
@@ -144,6 +156,9 @@ final class NoteSleuthTests: XCTestCase {
         XCTAssertEqual(idx.search(.parse("#work #urgent"), o).map(\.title), ["Meeting notes"])
         XCTAssertEqual(idx.search(.parse("#trav"), o).map(\.title), ["Trip plan"])                       // tag prefix
         XCTAssertTrue(idx.search(.parse("zzzz"), o).isEmpty)
+        XCTAssertEqual(Set(idx.search(.parse("edited:1w"), o).map(\.title)), ["Grocery list", "Meeting notes", "Old work"]) // Trip plan is 300 days old
+        XCTAssertEqual(idx.search(.parse("before:\(Calendar.current.component(.year, from: Date()) + 1) edited:2y -#work"), o).count, 2)
+        XCTAssertTrue(idx.search(.parse("after:\(Calendar.current.component(.year, from: Date()) + 1)"), o).isEmpty)
         XCTAssertEqual(idx.search(.parse("#work in:arch"), o).map(\.title), ["Old work"])                // folder filter
         XCTAssertEqual(idx.search(.parse("in:notes in:arch"), o).count, 4)                               // folders ORed
         XCTAssertEqual(idx.search(.parse("\"eggs bread\""), o).map(\.title), ["Grocery list"])           // exact phrase
@@ -183,7 +198,7 @@ final class NoteSleuthTests: XCTestCase {
             CREATE TABLE ZICCLOUDSYNCINGOBJECT (Z_PK INTEGER PRIMARY KEY, Z_ENT INTEGER, ZTITLE1 TEXT, ZTITLE2 TEXT,
               ZIDENTIFIER TEXT, ZMODIFICATIONDATE1 REAL, ZFOLDER INTEGER, ZFOLDERTYPE INTEGER, ZMARKEDFORDELETION INTEGER,
               ZISPASSWORDPROTECTED INTEGER, ZTYPEUTI1 TEXT, ZALTTEXT TEXT, ZNOTE1 INTEGER,
-              ZTYPEUTI TEXT, ZMERGEABLEDATA1 BLOB, ZNAME TEXT, ZACCOUNT4 INTEGER, ZACCOUNT7 INTEGER);
+              ZTYPEUTI TEXT, ZMERGEABLEDATA1 BLOB, ZNAME TEXT, ZACCOUNT4 INTEGER, ZACCOUNT7 INTEGER, ZISPINNED INTEGER);
             INSERT INTO ZICCLOUDSYNCINGOBJECT (Z_PK, Z_ENT, ZNAME) VALUES (5, 14, 'iCloud');
             INSERT INTO ZICCLOUDSYNCINGOBJECT (Z_PK, Z_ENT, ZIDENTIFIER, ZTYPEUTI, ZMERGEABLEDATA1)
               VALUES (21, 31, 'TABLE-1', 'com.apple.notes.table', X'\(table)');
@@ -194,7 +209,7 @@ final class NoteSleuthTests: XCTestCase {
                      (11, 12, 'Trashed', 'UUID-11', 700000000, 2, 0, 0),
                      (12, 12, 'Gone', 'UUID-12', 700000000, 1, 1, 0),
                      (13, 12, 'Secret', 'UUID-13', 700000000, 1, 0, 1);
-            UPDATE ZICCLOUDSYNCINGOBJECT SET ZACCOUNT7 = 5 WHERE Z_PK = 10;
+            UPDATE ZICCLOUDSYNCINGOBJECT SET ZACCOUNT7 = 5, ZISPINNED = 1 WHERE Z_PK = 10;
             INSERT INTO ZICNOTEDATA VALUES (10, X'\(blob)'), (13, X'deadbeef');
             INSERT INTO ZICCLOUDSYNCINGOBJECT (Z_PK, Z_ENT, ZTYPEUTI1, ZALTTEXT, ZNOTE1)
               VALUES (20, 30, 'com.apple.notes.inlinetextattachment.hashtag', '#ProjectX', 10);
@@ -212,6 +227,7 @@ final class NoteSleuthTests: XCTestCase {
         XCTAssertEqual(Set(stamps.keys), [10, 13]) // trash folder and deleted notes excluded
         XCTAssertEqual(stamps[10]?.folder, "Work")
         XCTAssertEqual(stamps[10]?.account, "iCloud")
+        XCTAssertEqual([stamps[10]?.pinned, stamps[13]?.pinned], [true, false])
         XCTAssertEqual(try reader.tables(), ["TABLE-1": ["Price", "42 EUR"]])
         XCTAssertEqual(try reader.inlineAltText()["TABLE-1"], "▦ Price · 42 EUR")
         XCTAssertEqual(try reader.hashtags()[10], ["projectx"])

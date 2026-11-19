@@ -13,6 +13,7 @@ A fast, keyboard-driven menu-bar search for **Apple Notes** on macOS 14+ (Apple 
 - **Exact phrases**: `"project plan"` matches those words together, in that order.
 - **Folder and account filter**: `in:work` limits results to folders or accounts whose name starts with "work"; `in:"my folder"` for names with spaces.
 - **To-dos**: `is:todo` finds notes that still have an unticked checklist item.
+- **Date filters**: `edited:7d` (also `w`, `m`, `y`), `after:2025-06`, `before:2025-06-15`.
 - **Tables and links**: text inside tables is searchable, and so are link addresses (`github.com`).
 - **Tag browser** (⌘4): every hashtag with its note count.
 - **Jump to the match**: the preview scrolls to the first matching line; ⌘G / ⇧⌘G step through the rest.
@@ -20,6 +21,8 @@ A fast, keyboard-driven menu-bar search for **Apple Notes** on macOS 14+ (Apple 
 - **Popup on a global hotkey** (default ⌥Space, configurable), with a preview pane that highlights matches.
 - **Favourites** (⌘D), **recently opened** notes, **recent hashtags**, **bookmarked searches** (⌘S).
 - **Per-note global hotkeys**: assign one from the preview pane or in Settings → Note Hotkeys.
+- **New note** (⌘N) titled with what you typed, **Copy as Markdown** (⇧⌘C), **compact mode** (⌘P), and pinned notes listed first under All Notes.
+- **Search links**: `notesleuth://search?q=budget` opens the popup with that search, for Shortcuts (Open URL), Raycast or Alfred.
 - **Launch at login**, plus a detailed Settings window.
 - **Automatic updates** through [Sparkle](https://sparkle-project.org).
 
@@ -79,6 +82,9 @@ If an *Apple Development* or *Developer ID* certificate is in your keychain, the
 | ⌘D | Toggle favourite |
 | ⌘S | Bookmark current search |
 | ⌘L | Copy a link to the note |
+| ⇧⌘C | Copy the note as Markdown |
+| ⌘N | New note titled with what you typed |
+| ⌘P | Compact popup (no preview) / full popup |
 | ⌘R | Switch between best match and newest first |
 | ⌘G / ⇧⌘G | Next / previous matching line in the preview |
 | ↑ in an empty search box | Recall earlier searches |

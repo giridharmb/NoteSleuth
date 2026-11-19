@@ -8,6 +8,7 @@ struct Note: Identifiable, Hashable {
     let spans: [Span]        // body with Notes' formatting, for the preview
     let folder: String
     var account = ""         // shown only when there is more than one
+    var pinned = false       // pinned in Notes: listed first under All Notes
     let modified: Date
     let locked: Bool
     let inlineTags: [String] // "#tag" typed as plain text (not converted by Notes)
@@ -88,11 +89,13 @@ struct Query: Equatable {
     var terms: [String] = []
     var phrases: [String] = []
     var todoOnly = false
+    var after: Date?   // `edited:7d`, `after:2025-01`
+    var before: Date?  // `before:2025-01-15`
     var tagGroups: [[String]] = []
     var excludedTags: [String] = []
     var folders: [String] = []
 
-    var isEmpty: Bool { terms.isEmpty && phrases.isEmpty && tagGroups.isEmpty && excludedTags.isEmpty && folders.isEmpty && !todoOnly }
+    var isEmpty: Bool { terms.isEmpty && phrases.isEmpty && tagGroups.isEmpty && excludedTags.isEmpty && folders.isEmpty && !todoOnly && after == nil && before == nil }
     var allTags: [String] { tagGroups.flatMap { $0 } }
     var highlights: [String] { terms + phrases }
 
@@ -113,12 +116,34 @@ struct Query: Equatable {
         return out
     }
 
-    static func parse(_ text: String) -> Query {
+    /// `7d`, `2w`, `3m`, `1y` → that long before `now`.
+    private static func ago(_ s: Substring, _ now: Date) -> Date? {
+        let units: [Character: Calendar.Component] = ["d": .day, "w": .weekOfYear, "m": .month, "y": .year]
+        guard let u = s.last.flatMap({ units[$0] }), let n = Int(s.dropLast()), n > 0, n < 10_000 else { return nil }
+        return Calendar.current.date(byAdding: u, value: -n, to: now)
+    }
+
+    /// `2025`, `2025-01` or `2025-01-15` → the start of that year, month or day.
+    private static func day(_ s: Substring) -> Date? {
+        let p = s.split(separator: "-").map { Int($0) }
+        guard (1...3).contains(p.count), !p.contains(nil), let y = p[0], (1900...9999).contains(y) else { return nil }
+        let c = DateComponents(year: y, month: p.count > 1 ? p[1] : 1, day: p.count > 2 ? p[2] : 1)
+        return c.isValidDate(in: Calendar.current) ? Calendar.current.date(from: c) : nil
+    }
+
+    static func parse(_ text: String, now: Date = Date()) -> Query {
         var q = Query()
         for (raw, quoted) in tokens(text) {
             let token = quoted ? Substring(raw.replacingOccurrences(of: "\"", with: "")) : raw
-            if token.lowercased() == "is:todo" {
+            let lower = token.lowercased()
+            if lower == "is:todo" {
                 q.todoOnly = true
+            } else if lower.hasPrefix("edited:"), let d = ago(lower.dropFirst(7), now) {
+                q.after = d
+            } else if lower.hasPrefix("after:"), let d = day(lower.dropFirst(6)) {
+                q.after = d
+            } else if lower.hasPrefix("before:"), let d = day(lower.dropFirst(7)) {
+                q.before = d
             } else if quoted, !token.lowercased().hasPrefix("in:") {
                 let p = String(token).folded.trimmingCharacters(in: .whitespaces)
                 if !p.isEmpty { q.phrases.append(p) }
@@ -194,6 +219,8 @@ struct SearchIndex {
             }
         }
         if q.todoOnly { for i in 0..<n where notes[i].openTodo == nil { allowed[i] = false } }
+        if let d = q.after { for i in 0..<n where notes[i].modified < d { allowed[i] = false } }
+        if let d = q.before { for i in 0..<n where notes[i].modified >= d { allowed[i] = false } }
         let phrases = q.phrases.map { Array($0.utf8) }
         for i in 0..<n where allowed[i] && !phrases.allSatisfy({ Self.contains(notes[i].titleKey, $0) || (o.searchBody && Self.contains(notes[i].bodyKey, $0)) }) {
             allowed[i] = false

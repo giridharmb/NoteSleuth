@@ -66,7 +66,7 @@ final class NotesReader {
         return errno == ENOENT
     }
 
-    struct Stamp: Equatable { let modified: Double; let folder: String; var account = "" }
+    struct Stamp: Equatable { let modified: Double; let folder: String; var account = ""; var pinned = false }
 
     struct RawNote {
         let pk: Int64
@@ -101,7 +101,8 @@ final class NotesReader {
     func stamps() throws -> [Int64: Stamp] {
         var out: [Int64: Stamp] = [:]
         let sql = """
-            SELECT n.Z_PK, n.\(col("ZMODIFICATIONDATE1")), f.\(col("ZTITLE2")), a.\(col("ZNAME"))
+            SELECT n.Z_PK, n.\(col("ZMODIFICATIONDATE1")), f.\(col("ZTITLE2")), a.\(col("ZNAME")),
+                   \(columns.contains("ZISPINNED") ? "n.ZISPINNED" : "0")
             FROM ZICCLOUDSYNCINGOBJECT n LEFT JOIN ZICCLOUDSYNCINGOBJECT f ON f.Z_PK = n.\(col("ZFOLDER"))
               LEFT JOIN ZICCLOUDSYNCINGOBJECT a ON a.Z_PK = \(accountColumn)
             WHERE n.Z_ENT = \(noteEntity)
@@ -109,7 +110,7 @@ final class NotesReader {
               AND IFNULL(f.\(col("ZFOLDERTYPE")), 0) != 1
             """ // ZFOLDERTYPE 1 = "Recently Deleted"
         try db.rows(sql) {
-            out[$0.int(0)] = Stamp(modified: $0.double(1), folder: $0.string(2) ?? "Notes", account: $0.string(3) ?? "")
+            out[$0.int(0)] = Stamp(modified: $0.double(1), folder: $0.string(2) ?? "Notes", account: $0.string(3) ?? "", pinned: $0.int(4) != 0)
         }
         return out
     }

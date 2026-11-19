@@ -155,7 +155,7 @@ struct PopupView: View {
             Button(sortByDate ? "Newest first ⌘R" : "Best match ⌘R") { model.toggleSort() }
                 .buttonStyle(.borderless).help("Switch between best match and newest first")
             Group {
-                Text("↩ open"); Text("⌘↩ copy"); Text("⌘L link"); Text("⌘D favourite"); Text("⌘S bookmark"); Text("⌘1-4 tabs")
+                Text("↩ open"); Text("⌘↩ copy"); Text("⌘N new"); Text("⌘D favourite"); Text("⌘P compact"); Text("⌘1-4 tabs")
             }
             .foregroundStyle(.secondary).lineLimit(1)
         }
@@ -199,6 +199,7 @@ struct ResultRow: View {
         VStack(alignment: .leading, spacing: 3) {
             HStack(spacing: 5) {
                 if note.locked { Image(systemName: "lock.fill").imageScale(.small).foregroundStyle(.secondary) }
+                if note.pinned { Image(systemName: "pin.fill").imageScale(.small).foregroundStyle(.orange).accessibilityLabel("Pinned") }
                 Text(note.title).font(.system(size: 14, weight: .semibold)).lineLimit(1)
                 Spacer(minLength: 4)
                 if let hotkey { Text(hotkey).font(.caption2.monospaced()).padding(.horizontal, 4)
@@ -245,6 +246,8 @@ struct NotePreview: View {
                                      placeholder: "Set Hotkey")
                         .controlSize(.small)
                         .help("Global hotkey that opens this note")
+                    Button { model.copyMarkdown(note) } label: { Image(systemName: "doc.on.doc") }
+                        .buttonStyle(.borderless).help("Copy as Markdown (⇧⌘C)").accessibilityLabel("Copy note as Markdown")
                     Button { model.copyLink(note) } label: { Image(systemName: "link") }
                         .buttonStyle(.borderless).help("Copy a link to this note (⌘L)").accessibilityLabel("Copy link to note")
                     Button("Open") { model.open(note) }.controlSize(.small)

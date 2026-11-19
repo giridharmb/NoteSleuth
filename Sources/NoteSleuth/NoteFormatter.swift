@@ -16,8 +16,7 @@ enum NoteFormatter {
         }
     }
 
-    /// One entry per line, so the preview can scroll to the lines that contain a search term (`hit`).
-    static func renderLines(_ spans: [Span], highlight terms: [String], skipTitle: String? = nil, limit: Int = 30_000) -> [(text: AttributedString, hit: Bool)] {
+    private static func split(_ spans: [Span], limit: Int) -> [Line] {
         var lines = [Line()]
         var used = 0
         for span in spans where used < limit {
@@ -30,6 +29,57 @@ enum NoteFormatter {
                 if !part.isEmpty { lines[lines.count - 1].spans.append(Span(text: String(part), style: span.style)) }
             }
         }
+        return lines
+    }
+
+    /// The note as Markdown: headings, lists, checklists, quotes, code blocks, bold/italic/strike and links.
+    static func markdown(_ spans: [Span]) -> String {
+        var out: [String] = []
+        var numbers: [Int: Int] = [:]
+        var inCode = false
+        for line in split(spans, limit: .max) {
+            let p = line.para ?? TextStyle()
+            let code = p.paragraph == 4
+            if code != inCode { out.append("```"); inCode = code }
+            if code { out.append(line.spans.map(\.text).joined()); continue }
+            if p.paragraph == 102 {
+                numbers = numbers.filter { $0.key <= p.indent }
+                numbers[p.indent, default: 0] += 1
+            } else {
+                numbers = [:]
+            }
+            var prefix = String(repeating: "    ", count: p.indent)
+            switch p.paragraph {
+            case 0: prefix += "# "
+            case 1: prefix += "## "
+            case 2: prefix += "### "
+            case 100, 101: prefix += "- "
+            case 102: prefix += "\(numbers[p.indent]!). "
+            case 103: prefix += p.checked ? "- [x] " : "- [ ] "
+            default: break
+            }
+            if p.quote { prefix = "> " + prefix }
+            let text = line.spans.map { s -> String in
+                let core = s.text.trimmingCharacters(in: .whitespaces)
+                guard !core.isEmpty else { return s.text }
+                var t = core
+                // Headings are already bold; marking them again would print literal asterisks in some renderers.
+                if s.style.bold, !(0...2).contains(p.paragraph) { t = "**\(t)**" }
+                if s.style.italic { t = "*\(t)*" }
+                if s.style.strike { t = "~~\(t)~~" }
+                if let link = s.style.link { t = "[\(t)](\(link))" }
+                // Markers must hug the text, so keep the span's own spacing outside them.
+                return String(s.text.prefix { $0 == " " }) + t + String(s.text.reversed().prefix { $0 == " " })
+            }.joined()
+            out.append(text.isEmpty ? "" : prefix + text)
+        }
+        if inCode { out.append("```") }
+        return out.joined(separator: "\n")
+    }
+
+    /// One entry per line, so the preview can scroll to the lines that contain a search term (`hit`).
+    static func renderLines(_ spans: [Span], highlight terms: [String], skipTitle: String? = nil, limit: Int = 30_000) -> [(text: AttributedString, hit: Bool)] {
+        var lines = split(spans, limit: limit)
 
         if let skipTitle, lines.count > 1,
            lines[0].spans.map(\.text).joined().trimmingCharacters(in: .whitespaces) == skipTitle {

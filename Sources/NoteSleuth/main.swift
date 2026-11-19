@@ -27,6 +27,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         setUpPanel()
         model.onClose = { [weak self] in self?.hidePopup() }
         model.onOpenSettings = { [weak self] in self?.hidePopup(); self?.showSettings(tab: "index") }
+        model.onToggleCompact = { [weak self] in self?.toggleCompact() }
 
         user.$popupShortcut.combineLatest(user.$noteHotkeys)
             .receive(on: RunLoop.main)
@@ -122,6 +123,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             guard let self, self.panel.isKeyWindow, !ShortcutRecorder.isRecording else { return e }
             return self.model.handleKey(e) ? nil : e
         }
+    }
+
+    /// ⌘P: a small list-only popup, or the full one with the preview.
+    private func toggleCompact() {
+        let d = UserDefaults.standard
+        let preview = !d.bool(forKey: Pref.showPreview)
+        d.set(preview, forKey: Pref.showPreview)
+        let size = preview ? NSSize(width: 1100, height: 700) : NSSize(width: 620, height: 460)
+        var f = panel.frame // keep the search field where it is: same centre, same top edge
+        f.origin.x += (f.width - size.width) / 2
+        f.origin.y += f.height - size.height
+        f.size = size
+        panel.setFrame(f, display: true, animate: true)
+    }
+
+    /// `notesleuth://search?q=…` from Shortcuts, Raycast, Alfred or a link: opens the popup with that search.
+    func application(_ application: NSApplication, open urls: [URL]) {
+        guard let c = urls.first.flatMap({ URLComponents(url: $0, resolvingAgainstBaseURL: false) }),
+              c.scheme == "notesleuth", c.host == "search" else { return }
+        let q = c.queryItems?.first { $0.name == "q" }?.value ?? ""
+        if !panel.isVisible { showPopup() }
+        model.query = String(q.prefix(500)) // untrusted input: it only ever becomes search text
     }
 
     @objc func togglePopup() {

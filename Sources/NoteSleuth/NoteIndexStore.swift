@@ -120,6 +120,7 @@ final class NoteIndexStore: ObservableObject {
                 var n = Note(pk: r.pk, id: r.identifier, title: r.title, spans: spans, folder: stamp.folder,
                              modified: Date(timeIntervalSinceReferenceDate: stamp.modified), locked: r.locked)
                 n.account = stamp.account
+                n.pinned = stamp.pinned
                 out[i] = n
             }
         }

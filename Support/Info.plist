@@ -8,13 +8,18 @@
 	<key>CFBundleExecutable</key><string>NoteSleuth</string>
 	<key>CFBundleIconFile</key><string>AppIcon</string>
 	<key>CFBundlePackageType</key><string>APPL</string>
-	<key>CFBundleShortVersionString</key><string>1.2.0</string>
-	<key>CFBundleVersion</key><string>3</string>
+	<key>CFBundleShortVersionString</key><string>1.3.0</string>
+	<key>CFBundleVersion</key><string>4</string>
 	<key>LSMinimumSystemVersion</key><string>14.0</string>
 	<key>LSUIElement</key><true/>
 	<key>LSApplicationCategoryType</key><string>public.app-category.productivity</string>
 	<key>NSHighResolutionCapable</key><true/>
 	<key>NSAppleEventsUsageDescription</key><string>NoteSleuth asks Notes to show the note you picked.</string>
+	<key>CFBundleURLTypes</key>
+	<array><dict>
+		<key>CFBundleURLName</key><string>io.github.giridharmb.NoteSleuth</string>
+		<key>CFBundleURLSchemes</key><array><string>notesleuth</string></array>
+	</dict></array>
 	<key>SUFeedURL</key><string>https://raw.githubusercontent.com/giridharmb/NoteSleuth/main/appcast.xml</string>
 	<key>SUPublicEDKey</key><string>exHjcuD0jwsG+7kfWiGctC8ciHRl+/TPTuq3VFWFBHc=</string>
 	<key>SUEnableAutomaticChecks</key><true/>

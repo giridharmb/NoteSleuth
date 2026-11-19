@@ -1,6 +1,6 @@
 cask "notesleuth" do
-  version "1.2.0"
-  sha256 "0fb31a69bccb648024a7b2b7ca0d688c864d092b1b1ba40b922da6a79163e222"
+  version "1.3.0"
+  sha256 "af4d93f57fcd3ad7064071f5d44c91cf1b27363ba2245ef8bff994d7c39819b5"
 
   url "https://github.com/giridharmb/NoteSleuth/releases/download/v#{version}/NoteSleuth-#{version}.dmg"
   name "NoteSleuth"

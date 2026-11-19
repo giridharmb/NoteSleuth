@@ -3,6 +3,14 @@
     <channel>
         <title>NoteSleuth</title>
         <item>
+            <title>1.3.0</title>
+            <pubDate>Thu, 19 Nov 2026 06:51:41 -0800</pubDate>
+            <sparkle:version>4</sparkle:version>
+            <sparkle:shortVersionString>1.3.0</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <enclosure url="https://github.com/giridharmb/NoteSleuth/releases/download/v1.3.0/NoteSleuth-1.3.0.dmg" length="3079493" type="application/octet-stream" sparkle:edSignature="qCCT7QHgNKogFgmrbSGaggxY49WpMgibn8cVyjmz5wjbCmmJbmo0qMvj0Ui4/aHxkbjAsXTNY0baCl0X52KFDg=="/>
+        </item>
+        <item>
             <title>1.2.0</title>
             <pubDate>Thu, 19 Nov 2026 06:34:48 -0800</pubDate>
             <sparkle:version>3</sparkle:version>
