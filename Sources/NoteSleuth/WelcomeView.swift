@@ -8,6 +8,7 @@ struct WelcomeView: View {
     let onDone: () -> Void
     @State private var granted = NotesReader.hasAccess
     @State private var openedSettings = false
+    @State private var missing = NotesReader.databaseMissing
     private let poll = Timer.publish(every: 1.5, on: .main, in: .common).autoconnect()
 
     var body: some View {
@@ -20,6 +21,12 @@ struct WelcomeView: View {
                 }
             }
 
+            if missing {
+                step(1, done: false, title: "Open Notes once") {
+                    Text("Notes hasn’t been used on this Mac yet, so there is nothing to search. Open Notes, let it finish setting up, and this window will carry on.")
+                    Button("Open Notes") { NSWorkspace.shared.open(URL(fileURLWithPath: "/System/Applications/Notes.app")) }
+                }
+            } else {
             step(1, done: granted, title: "Allow Full Disk Access") {
                 Text("Notes keeps its database in a folder macOS protects. NoteSleuth only reads it, keeps the index in memory, and never sends anything off your Mac.")
                 if !granted {
@@ -42,6 +49,8 @@ struct WelcomeView: View {
                 }
             }
 
+            }
+
             step(2, done: false, title: "Press \(user.popupShortcut.display) to search") {
                 Text("Type words or #hashtags, then ↩ to open the note. Change the hotkey, launch at login and more in Settings.")
                 Text("The first time you open a note, macOS asks to let NoteSleuth control Notes. Click Allow.")
@@ -57,6 +66,7 @@ struct WelcomeView: View {
         .padding(24)
         .frame(width: 520)
         .onReceive(poll) { _ in
+            if missing { missing = NotesReader.databaseMissing }
             guard !granted, NotesReader.hasAccess else { return }
             granted = true
             store.start()

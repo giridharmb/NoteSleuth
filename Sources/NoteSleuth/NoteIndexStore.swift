@@ -26,6 +26,14 @@ final class NoteIndexStore: ObservableObject {
     private var stream: FSEventStreamRef?
     private var timer: DispatchSourceTimer?
 
+    #if DEBUG
+    /// Fixture data for tests and README screenshots.
+    func setDemo(_ notes: [Note]) {
+        index = SearchIndex(notes: notes)
+        status = Status(noteCount: notes.count, tagCount: index.tagCounts.count, lastSync: Date(), needsAccess: false)
+    }
+    #endif
+
     func start() {
         schedule()
         queue.async { [self] in
@@ -63,6 +71,9 @@ final class NoteIndexStore: ObservableObject {
     private func runSync() {
         let start = Date()
         do {
+            if NotesReader.databaseMissing {
+                throw NotesError.database("nothing to read yet. Open Notes once on this Mac, then choose Rebuild Index")
+            }
             guard NotesReader.hasAccess else { throw AccessDenied() }
             try sync()
             let elapsed = Date().timeIntervalSince(start)
@@ -87,7 +98,12 @@ final class NoteIndexStore: ObservableObject {
     private func sync() throws {
         let reader = try NotesReader()
         let uuid = try reader.storeUUID()
-        let newStamps = try reader.stamps()
+        var newStamps = try reader.stamps()
+        let excluded = (UserDefaults.standard.string(forKey: Pref.excludedFolders) ?? "").split(separator: ",")
+            .map { String($0).folded.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+        if !excluded.isEmpty {
+            newStamps = newStamps.filter { s in !excluded.contains { s.value.folder.folded.hasPrefix($0) } }
+        }
         let tags = try reader.hashtags()
         let altText = changed(newStamps).isEmpty ? [:] : try reader.inlineAltText()
 
@@ -101,8 +117,10 @@ final class NoteIndexStore: ObservableObject {
                 let r = raws[i]
                 guard let stamp = newStamps[r.pk] else { return }
                 let spans = r.locked ? [] : (r.data.flatMap { NoteDecoder.spans(from: $0, altText: altText) } ?? [])
-                out[i] = Note(pk: r.pk, id: r.identifier, title: r.title, spans: spans, folder: stamp.folder,
-                              modified: Date(timeIntervalSinceReferenceDate: stamp.modified), locked: r.locked)
+                var n = Note(pk: r.pk, id: r.identifier, title: r.title, spans: spans, folder: stamp.folder,
+                             modified: Date(timeIntervalSinceReferenceDate: stamp.modified), locked: r.locked)
+                n.account = stamp.account
+                out[i] = n
             }
         }
         for n in decoded.compactMap({ $0 }) { notes[n.pk] = n; dirty = true }

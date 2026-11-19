@@ -5,6 +5,7 @@ struct PopupView: View {
     @ObservedObject var user: UserStore
     @ObservedObject var store: NoteIndexStore
     @AppStorage(Pref.showPreview) private var showPreview = true
+    @AppStorage(Pref.sortByDate) private var sortByDate = false
     @FocusState private var searchFocused: Bool
 
     var body: some View {
@@ -18,17 +19,22 @@ struct PopupView: View {
                 }
                 .pickerStyle(.segmented).labelsHidden().padding(.horizontal, 12).padding(.vertical, 6)
             }
-            HStack(spacing: 0) {
-                resultList.frame(width: showPreview ? 420 : nil)
-                if showPreview {
-                    Divider()
-                    NotePreview(note: model.selectedNote, terms: model.parsed.terms, model: model, user: user)
+            if model.query.isEmpty && model.tab == .tags {
+                tagBrowser
+            } else {
+                HStack(spacing: 0) {
+                    resultList.frame(width: showPreview ? 420 : nil)
+                    if showPreview {
+                        Divider()
+                        NotePreview(note: model.selectedNote, terms: model.parsed.highlights, model: model, user: user)
+                    }
                 }
             }
             Divider()
             footer
         }
-        .frame(width: showPreview ? 1100 : 680, height: 700)
+        .frame(minWidth: showPreview ? 760 : 480, idealWidth: showPreview ? 1100 : 680, maxWidth: .infinity,
+               minHeight: 380, idealHeight: 700, maxHeight: .infinity)
         .background(.regularMaterial)
         .onAppear { searchFocused = true }
         .onReceive(NotificationCenter.default.publisher(for: .popupDidShow)) { _ in searchFocused = true }
@@ -79,12 +85,30 @@ struct PopupView: View {
         }
     }
 
+    /// Every hashtag with its note count; clicking one starts a search for it.
+    private var tagBrowser: some View {
+        ScrollView {
+            if store.index.tagCounts.isEmpty {
+                Text("No hashtags found in your notes").foregroundStyle(.secondary).padding(40)
+            }
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 8, alignment: .leading)], alignment: .leading, spacing: 8) {
+                ForEach(store.index.tagCounts, id: \.tag) { t in
+                    Chip(text: "#\(t.tag)  \(t.count)", systemImage: nil, tint: .orange) { model.toggleTag(t.tag) }
+                        .accessibilityLabel("\(t.tag), \(t.count) notes")
+                }
+            }
+            .padding(14)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
     private var resultList: some View {
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(spacing: 2) {
                     ForEach(Array(model.results.enumerated()), id: \.element.id) { i, note in
-                        ResultRow(note: note, terms: model.parsed.terms, selected: i == model.selection,
+                        ResultRow(note: note, terms: model.parsed.highlights, todo: model.parsed.todoOnly,
+                                  showAccount: store.index.multipleAccounts, selected: i == model.selection,
                                   favorite: user.isFavorite(note.id), hotkey: user.hotkey(for: note.id)?.display)
                             .id(note.id)
                             .contentShape(Rectangle())
@@ -128,10 +152,12 @@ struct PopupView: View {
                 Text("\(store.status.noteCount) notes · \(store.status.tagCount) tags · \(model.results.count) shown")
             }
             Spacer()
+            Button(sortByDate ? "Newest first ⌘R" : "Best match ⌘R") { model.toggleSort() }
+                .buttonStyle(.borderless).help("Switch between best match and newest first")
             Group {
-                Text("↩ open"); Text("⌘↩ copy"); Text("⌘D favourite"); Text("⌘S bookmark"); Text("⌘1-3 tabs")
+                Text("↩ open"); Text("⌘↩ copy"); Text("⌘L link"); Text("⌘D favourite"); Text("⌘S bookmark"); Text("⌘1-4 tabs")
             }
-            .foregroundStyle(.secondary)
+            .foregroundStyle(.secondary).lineLimit(1)
         }
         .font(.caption)
         .padding(.horizontal, 14).padding(.vertical, 7)
@@ -163,6 +189,8 @@ struct Chip: View {
 struct ResultRow: View {
     let note: Note
     let terms: [String]
+    var todo = false
+    var showAccount = false
     let selected: Bool
     let favorite: Bool
     let hotkey: String?
@@ -177,9 +205,10 @@ struct ResultRow: View {
                     .background(RoundedRectangle(cornerRadius: 3).fill(.quaternary)) }
                 if favorite { Image(systemName: "star.fill").imageScale(.small).foregroundStyle(.yellow) }
             }
-            Text(note.snippet(for: terms)).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(2)
+            Text(todo ? "○  " + (note.openTodo ?? "") : note.snippet(for: terms))
+                .font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(2)
             HStack(spacing: 6) {
-                Text(note.folder)
+                Text(showAccount && !note.account.isEmpty ? "\(note.account) › \(note.folder)" : note.folder)
                 Text("·")
                 Text(note.modified, format: .relative(presentation: .named))
                 if !note.tags.isEmpty { Text("·"); Text(note.tags.prefix(4).map { "#" + $0 }.joined(separator: " ")).lineLimit(1) }
@@ -216,6 +245,8 @@ struct NotePreview: View {
                                      placeholder: "Set Hotkey")
                         .controlSize(.small)
                         .help("Global hotkey that opens this note")
+                    Button { model.copyLink(note) } label: { Image(systemName: "link") }
+                        .buttonStyle(.borderless).help("Copy a link to this note (⌘L)").accessibilityLabel("Copy link to note")
                     Button("Open") { model.open(note) }.controlSize(.small)
                 }
                 HStack(spacing: 6) {
@@ -233,12 +264,31 @@ struct NotePreview: View {
                     }
                 }
                 Divider()
-                ScrollView {
-                    Text(note.locked ? AttributedString("🔒 This note is locked. Only its title is searchable.")
-                                     : NoteFormatter.render(note.spans, highlight: terms, skipTitle: note.title))
-                        .font(.system(size: 14))
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .textSelection(.enabled)
+                let lines = note.locked ? [(text: AttributedString("🔒 This note is locked. Only its title is searchable."), hit: false)]
+                                        : NoteFormatter.renderLines(note.spans, highlight: terms, skipTitle: note.title)
+                let hits = lines.indices.filter { lines[$0].hit }
+                let current = hits.isEmpty ? nil : hits[((model.matchStep % hits.count) + hits.count) % hits.count]
+                if hits.count > 1, let current {
+                    Text("Match \(hits.firstIndex(of: current)! + 1) of \(hits.count) lines · ⌘G next · ⇧⌘G previous")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        // One Text per line so the view can scroll to a match (shortcut: text selection is per line;
+                        // switch to an NSTextView wrapper if multi-line selection matters).
+                        LazyVStack(alignment: .leading, spacing: 2) {
+                            ForEach(lines.indices, id: \.self) { i in
+                                Text(lines[i].text.characters.isEmpty ? AttributedString(" ") : lines[i].text)
+                                    .font(.system(size: 14))
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .textSelection(.enabled)
+                                    .id(i)
+                            }
+                        }
+                    }
+                    .task(id: "\(note.id)|\(terms)|\(model.matchStep)") {
+                        if let current { proxy.scrollTo(current, anchor: .center) } else { proxy.scrollTo(0, anchor: .top) }
+                    }
                 }
             }
             .padding(14)

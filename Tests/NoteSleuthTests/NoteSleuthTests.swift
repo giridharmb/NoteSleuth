@@ -78,6 +78,24 @@ final class NoteSleuthTests: XCTestCase {
         XCTAssertEqual(spans[5].style.paragraph, 102)
         XCTAssertTrue(spans[7].style.attachment)
 
+        // is:todo sees only unticked items; "Done" above is ticked.
+        let done = Note(pk: 1, id: "a", title: nil, spans: spans, folder: "Notes", modified: Date(), locked: false)
+        XCTAssertNil(done.openTodo)
+        var open = spans
+        open[4].style.checked = false
+        XCTAssertEqual(Note(pk: 1, id: "a", title: nil, spans: open, folder: "Notes", modified: Date(), locked: false).openTodo, "Done")
+        // Link targets are searchable even though only the link text is visible.
+        var linked = Note(pk: 2, id: "b", title: nil, spans: [Span(text: "Repo\nsee here", style: TextStyle(link: "https://github.com/x/y"))],
+                          folder: "Notes", modified: Date(), locked: false)
+        linked.account = "iCloud"
+        let idx = SearchIndex(notes: [done, linked])
+        XCTAssertEqual(idx.search(.parse("github.com"), SearchOptions()).map(\.id), ["b"])
+        XCTAssertEqual(idx.search(.parse("in:icl"), SearchOptions()).map(\.id), ["b"]) // in: also matches the account
+        XCTAssertTrue(idx.multipleAccounts)
+
+        let lines = NoteFormatter.renderLines(spans, highlight: ["milk"], skipTitle: "Plan")
+        XCTAssertEqual(lines.map(\.hit), [true, false, false, false])
+
         let rendered = String(NoteFormatter.render(spans, highlight: ["milk"], skipTitle: "Plan").characters)
         XCTAssertEqual(rendered, "Buy #groceries milk\n◉  Done\n1.  Step\nPic [🖼 Image]")
     }
@@ -91,6 +109,12 @@ final class NoteSleuthTests: XCTestCase {
         XCTAssertEqual(q.excludedTags, ["archive"])
         XCTAssertTrue(Query.parse("  # ").isEmpty)
         XCTAssertEqual(Query.parse("IN:Wörk in: x").folders, ["work"])
+        let p = Query.parse("milk \"Project Plan\" in:\"my folder\" is:todo \"open")
+        XCTAssertEqual(p.terms, ["milk"])
+        XCTAssertEqual(p.phrases, ["project plan", "open"]) // unclosed quote runs to the end
+        XCTAssertEqual(p.folders, ["my folder"])
+        XCTAssertTrue(p.todoOnly)
+        XCTAssertEqual(p.highlights, ["milk", "project plan", "open"])
     }
 
     func testEditDistance() {
@@ -122,6 +146,10 @@ final class NoteSleuthTests: XCTestCase {
         XCTAssertTrue(idx.search(.parse("zzzz"), o).isEmpty)
         XCTAssertEqual(idx.search(.parse("#work in:arch"), o).map(\.title), ["Old work"])                // folder filter
         XCTAssertEqual(idx.search(.parse("in:notes in:arch"), o).count, 4)                               // folders ORed
+        XCTAssertEqual(idx.search(.parse("\"eggs bread\""), o).map(\.title), ["Grocery list"])           // exact phrase
+        XCTAssertTrue(idx.search(.parse("\"bread eggs\""), o).isEmpty)                                   // wrong order
+        XCTAssertEqual(idx.search(.parse("grocery"), SearchOptions(sortByDate: true)).map(\.title),                    // newest first
+                       idx.notes.map(\.title).filter { ["Grocery list", "Meeting notes"].contains($0) })
         XCTAssertEqual(idx.search(.parse("hotle"), SearchOptions(typoTolerance: false)).count, 0)
         XCTAssertEqual(idx.search(.parse("milk"), SearchOptions(searchBody: false)).count, 0)
     }
@@ -144,6 +172,9 @@ final class NoteSleuthTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: dir) }
         let db = dir.appendingPathComponent("NoteStore.sqlite").path
         let blob = try noteBlob("Hello world\nsecond line").map { String(format: "%02x", $0) }.joined()
+        // MergableDataProto(2) → object(3) → entries(3), two of which carry a cell Note(10).text(2).
+        let cells = ld(3, ld(10, ld(2, Array("Price".utf8)))) + ld(3, [0x08, 0x01]) + ld(3, ld(10, ld(2, Array("42 EUR".utf8))))
+        let table = try gzip(Data(ld(2, ld(3, cells)))).map { String(format: "%02x", $0) }.joined()
         let sql = """
             CREATE TABLE Z_PRIMARYKEY (Z_ENT INTEGER, Z_NAME TEXT);
             INSERT INTO Z_PRIMARYKEY VALUES (12, 'ICNote'), (15, 'ICFolder');
@@ -151,7 +182,11 @@ final class NoteSleuthTests: XCTestCase {
             INSERT INTO Z_METADATA VALUES ('1A2B3C4D-0000-1111-2222-333344445555');
             CREATE TABLE ZICCLOUDSYNCINGOBJECT (Z_PK INTEGER PRIMARY KEY, Z_ENT INTEGER, ZTITLE1 TEXT, ZTITLE2 TEXT,
               ZIDENTIFIER TEXT, ZMODIFICATIONDATE1 REAL, ZFOLDER INTEGER, ZFOLDERTYPE INTEGER, ZMARKEDFORDELETION INTEGER,
-              ZISPASSWORDPROTECTED INTEGER, ZTYPEUTI1 TEXT, ZALTTEXT TEXT, ZNOTE1 INTEGER);
+              ZISPASSWORDPROTECTED INTEGER, ZTYPEUTI1 TEXT, ZALTTEXT TEXT, ZNOTE1 INTEGER,
+              ZTYPEUTI TEXT, ZMERGEABLEDATA1 BLOB, ZNAME TEXT, ZACCOUNT4 INTEGER, ZACCOUNT7 INTEGER);
+            INSERT INTO ZICCLOUDSYNCINGOBJECT (Z_PK, Z_ENT, ZNAME) VALUES (5, 14, 'iCloud');
+            INSERT INTO ZICCLOUDSYNCINGOBJECT (Z_PK, Z_ENT, ZIDENTIFIER, ZTYPEUTI, ZMERGEABLEDATA1)
+              VALUES (21, 31, 'TABLE-1', 'com.apple.notes.table', X'\(table)');
             CREATE TABLE ZICNOTEDATA (ZNOTE INTEGER, ZDATA BLOB);
             INSERT INTO ZICCLOUDSYNCINGOBJECT (Z_PK, Z_ENT, ZTITLE2, ZFOLDERTYPE) VALUES (1, 15, 'Work', 0), (2, 15, 'Recently Deleted', 1);
             INSERT INTO ZICCLOUDSYNCINGOBJECT (Z_PK, Z_ENT, ZTITLE1, ZIDENTIFIER, ZMODIFICATIONDATE1, ZFOLDER, ZMARKEDFORDELETION, ZISPASSWORDPROTECTED)
@@ -159,6 +194,7 @@ final class NoteSleuthTests: XCTestCase {
                      (11, 12, 'Trashed', 'UUID-11', 700000000, 2, 0, 0),
                      (12, 12, 'Gone', 'UUID-12', 700000000, 1, 1, 0),
                      (13, 12, 'Secret', 'UUID-13', 700000000, 1, 0, 1);
+            UPDATE ZICCLOUDSYNCINGOBJECT SET ZACCOUNT7 = 5 WHERE Z_PK = 10;
             INSERT INTO ZICNOTEDATA VALUES (10, X'\(blob)'), (13, X'deadbeef');
             INSERT INTO ZICCLOUDSYNCINGOBJECT (Z_PK, Z_ENT, ZTYPEUTI1, ZALTTEXT, ZNOTE1)
               VALUES (20, 30, 'com.apple.notes.inlinetextattachment.hashtag', '#ProjectX', 10);
@@ -175,6 +211,9 @@ final class NoteSleuthTests: XCTestCase {
         let stamps = try reader.stamps()
         XCTAssertEqual(Set(stamps.keys), [10, 13]) // trash folder and deleted notes excluded
         XCTAssertEqual(stamps[10]?.folder, "Work")
+        XCTAssertEqual(stamps[10]?.account, "iCloud")
+        XCTAssertEqual(try reader.tables(), ["TABLE-1": ["Price", "42 EUR"]])
+        XCTAssertEqual(try reader.inlineAltText()["TABLE-1"], "▦ Price · 42 EUR")
         XCTAssertEqual(try reader.hashtags()[10], ["projectx"])
         let raws = try reader.notes([10, 13]).sorted { $0.pk < $1.pk }
         XCTAssertEqual(raws.map(\.identifier), ["UUID-10", "UUID-13"])

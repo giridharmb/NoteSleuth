@@ -58,7 +58,7 @@ private struct GeneralSettings: View {
                 }
             }
             Section("Keys in the popup") {
-                Text("↑ ↓ / ⌃N ⌃P move · ↩ open in Notes · ⌘↩ copy text · ⇥ complete #tag · ⌘D favourite · ⌘S bookmark search · ⌘1/2/3 Recent/Favourites/All · ⎋ clear/close · ⌘, settings")
+                Text("↑ ↓ / ⌃N ⌃P move · ↩ open in Notes · ⌘↩ copy text · ⇥ complete #tag · ⌘D favourite · ⌘S bookmark search · ⌘L copy link · ⌘R sort · ⌘G / ⇧⌘G next / previous match · ↑ in an empty box recalls earlier searches · ⌘1–4 Recent/Favourites/All/Tags · ⎋ clear/close · ⌘, settings")
                     .font(.callout).foregroundStyle(.secondary)
             }
             Section("Updates") {
@@ -98,6 +98,7 @@ private struct SearchSettings: View {
     @AppStorage(Pref.typoTolerance) private var typos = true
     @AppStorage(Pref.recencyBoost) private var recency = true
     @AppStorage(Pref.maxResults) private var maxResults = 100
+    @AppStorage(Pref.sortByDate) private var sortByDate = false
 
     var body: some View {
         Form {
@@ -105,6 +106,7 @@ private struct SearchSettings: View {
                 Toggle("Search note contents (not just titles)", isOn: $searchBody)
                 Toggle("Tolerate typos (one wrong letter in words of 4+ letters)", isOn: $typos)
                 Toggle("Rank recently edited notes higher", isOn: $recency)
+                Toggle("Sort results newest first instead of best match (⌘R in the popup)", isOn: $sortByDate)
                 Stepper("Maximum results: \(maxResults)", value: $maxResults, in: 20...1000, step: 20)
             }
             Section("Query syntax") {
@@ -113,7 +115,9 @@ private struct SearchSettings: View {
                     Text("`#work #urgent` — notes with both tags")
                     Text("`#work|#home` — notes with either tag")
                     Text("`-#archive` — exclude a tag")
-                    Text("`in:work` — only folders whose name starts with “work”")
+                    Text("`\"project plan\"` — those exact words together")
+                    Text("`in:work` — only folders or accounts whose name starts with “work”")
+                    Text("`is:todo` — notes with an unticked checklist item")
                     Text("`#wor` — unknown tags match by prefix; press ⇥ to complete")
                 }
                 .font(.callout)
@@ -211,6 +215,7 @@ private struct LibrarySettings: View {
 private struct IndexSettings: View {
     @ObservedObject var store: NoteIndexStore
     @AppStorage(Pref.resyncMinutes) private var resync = 15
+    @AppStorage(Pref.excludedFolders) private var excluded = ""
 
     var body: some View {
         Form {
@@ -247,6 +252,9 @@ private struct IndexSettings: View {
                     ForEach([5, 15, 30, 60], id: \.self) { Text("\($0) minutes").tag($0) }
                 }
                 .onChange(of: resync) { store.restartTimer() }
+                TextField("Folders to leave out", text: $excluded, prompt: Text("e.g. Archive, Private"))
+                    .onSubmit { store.schedule() }
+                    .help("Comma-separated. Notes in folders whose name starts with one of these are never indexed. Press Return to apply.")
                 Button("Rebuild Index Now") { store.rebuild() }
                 Text("Changes in Notes are picked up within ~2 seconds via file-system events; only changed notes are re-read. The index lives in memory only and is never written to disk.")
                     .font(.caption).foregroundStyle(.secondary)

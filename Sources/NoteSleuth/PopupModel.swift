@@ -4,14 +4,16 @@ import Carbon.HIToolbox
 
 final class PopupModel: ObservableObject {
     enum Tab: String, CaseIterable, Identifiable {
-        case recent = "Recent", favorites = "Favourites", all = "All Notes"
+        case recent = "Recent", favorites = "Favourites", all = "All Notes", tags = "Tags"
         var id: String { rawValue }
     }
 
     @Published var query = "" { didSet { refresh() } }
     @Published var tab: Tab = .recent { didSet { refresh() } }
     @Published private(set) var results: [Note] = []
-    @Published var selection = 0
+    @Published var selection = 0 { didSet { matchStep = 0 } }
+    @Published var matchStep = 0 // which matching line the preview is scrolled to (⌘G / ⇧⌘G)
+    private var recall = -1      // position in user.recentQueries while pressing ↑ in the search box
     @Published private(set) var tagSuggestions: [String] = []
     @Published var flash: String?
 
@@ -52,13 +54,14 @@ final class PopupModel: ObservableObject {
             case .recent: results = user.history.compactMap(index.note(id:))
             case .favorites: results = user.favorites.compactMap(index.note(id:))
             case .all: results = Array(index.notes.prefix(max(limit, 20)))
+            case .tags: results = [] // the view shows the tag browser instead
             }
             restoreSelection(keepID)
             return
         }
         let d = UserDefaults.standard
         let opts = SearchOptions(searchBody: d.bool(forKey: Pref.searchBody), typoTolerance: d.bool(forKey: Pref.typoTolerance),
-                                 recencyBoost: d.bool(forKey: Pref.recencyBoost), limit: max(10, d.integer(forKey: Pref.maxResults)),
+                                 recencyBoost: d.bool(forKey: Pref.recencyBoost), sortByDate: d.bool(forKey: Pref.sortByDate), limit: max(10, d.integer(forKey: Pref.maxResults)),
                                  favorites: Set(user.favorites), recent: Set(user.history.prefix(20)))
         generation += 1
         let gen = generation
@@ -113,8 +116,34 @@ final class PopupModel: ObservableObject {
     func open(_ note: Note? = nil) {
         guard let note = note ?? selectedNote else { return }
         user.recordOpen(note.id, tags: parsed.allTags)
+        user.recordQuery(query)
         NotesOpener.open(note, storeUUID: store.storeUUID)
         onClose()
+    }
+
+    func copyLink(_ note: Note? = nil) {
+        guard let note = note ?? selectedNote else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString("notes://showNote?identifier=\(note.id)", forType: .string)
+        show("Copied link to “\(note.title)”")
+    }
+
+    func toggleSort() {
+        let d = UserDefaults.standard
+        d.set(!d.bool(forKey: Pref.sortByDate), forKey: Pref.sortByDate)
+        refresh()
+    }
+
+    /// ↑ in the search box walks back through earlier searches; ↓ walks forward again.
+    private func recallQuery(_ delta: Int) -> Bool {
+        let list = user.recentQueries
+        let atRecalled = list.indices.contains(recall) && query == list[recall]
+        guard query.isEmpty || (atRecalled && selection == 0) else { return false }
+        let next = (atRecalled ? recall : -1) + delta
+        guard next < list.count else { return true }
+        recall = next
+        query = next < 0 ? "" : list[next]
+        return true
     }
 
     func copy(_ note: Note? = nil) {
@@ -155,7 +184,9 @@ final class PopupModel: ObservableObject {
         let cmd = f.contains(.command)
         switch Int(e.keyCode) {
         case kVK_DownArrow: move(1); return true
-        case kVK_UpArrow: move(-1); return true
+        case kVK_UpArrow:
+            if selection == 0, recallQuery(1) { return true }
+            move(-1); return true
         case kVK_PageDown: move(10); return true
         case kVK_PageUp: move(-10); return true
         case kVK_Return, kVK_ANSI_KeypadEnter: cmd ? copy() : open(); return true
@@ -176,9 +207,14 @@ final class PopupModel: ObservableObject {
         switch c {
         case "d": toggleFavorite()
         case "s": saveSearch()
+        case "l": copyLink()
+        case "r": toggleSort()
+        case "g": matchStep += 1
+        case "G": matchStep -= 1
         case "1": tab = .recent; query = ""
         case "2": tab = .favorites; query = ""
         case "3": tab = .all; query = ""
+        case "4": tab = .tags; query = ""
         case ",": onOpenSettings()
         default: return false
         }
@@ -187,6 +223,22 @@ final class PopupModel: ObservableObject {
 }
 
 enum NotesOpener {
+    /// Tells the user why nothing happened; -1743 is "not allowed to send Apple events" (Automation switched off).
+    private static func failed(_ message: String) {
+        let denied = message.contains("-1743")
+        let a = NSAlert()
+        a.messageText = denied ? "NoteSleuth isn’t allowed to control Notes" : "Couldn’t open that note"
+        a.informativeText = denied
+            ? "Opening a note needs permission to control Notes. Turn on Notes under NoteSleuth in Privacy & Security → Automation."
+            : "Notes didn’t show the note. It may have been deleted or moved since the last sync."
+        a.addButton(withTitle: denied ? "Open Automation Settings" : "Open Notes")
+        a.addButton(withTitle: "Cancel")
+        NSApp.activate(ignoringOtherApps: true)
+        guard a.runModal() == .alertFirstButtonReturn else { return }
+        NSWorkspace.shared.open(denied ? URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Automation")!
+                                       : URL(fileURLWithPath: "/System/Applications/Notes.app"))
+    }
+
     static func open(_ note: Note, storeUUID: String) {
         // The UUID ends up inside AppleScript source, so only allow UUID characters.
         guard storeUUID.allSatisfy({ $0.isHexDigit || $0 == "-" }), !storeUUID.isEmpty else {
@@ -204,12 +256,12 @@ enum NotesOpener {
             let p = Process()
             p.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
             p.arguments = ["-e", script]
-            p.standardError = Pipe()
+            let err = Pipe()
+            p.standardError = err
             try? p.run()
+            let message = String(decoding: err.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
             p.waitUntilExit()
-            if p.terminationStatus != 0 {
-                DispatchQueue.main.async { NSWorkspace.shared.open(URL(fileURLWithPath: "/System/Applications/Notes.app")) }
-            }
+            if p.terminationStatus != 0 { DispatchQueue.main.async { failed(message) } }
         }
     }
 }

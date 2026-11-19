@@ -16,6 +16,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var panel: PopupPanel!
     private var settingsWindow: NSWindow?
     private var welcomeWindow: NSWindow?
+    private var warnedShortcut: Shortcut?
     let updater = SPUStandardUpdaterController(startingUpdater: true, updaterDelegate: nil, userDriverDelegate: nil)
     private var keyMonitor: Any?
     private var bag: Set<AnyCancellable> = []
@@ -45,13 +46,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         guard !ShortcutRecorder.isRecording else { return }
         let hk = HotKeyCenter.shared
         hk.unregisterAll()
-        if !hk.register(user.popupShortcut, action: { [weak self] in self?.togglePopup() }) {
-            NSLog("NoteSleuth: popup hotkey %@ is taken by another app", user.popupShortcut.display)
+        let taken = !hk.register(user.popupShortcut, action: { [weak self] in self?.togglePopup() })
+        if taken, warnedShortcut != user.popupShortcut {
+            warnedShortcut = user.popupShortcut
+            DispatchQueue.main.async { [weak self] in self?.warnHotkeyTaken() }
         }
         for item in user.noteHotkeys {
             hk.register(item.shortcut) { [weak self] in self?.openNote(id: item.noteID) }
         }
-        statusItem.menu?.item(withTag: 1)?.title = "Search Notes   \(user.popupShortcut.display)"
+        statusItem.menu?.item(withTag: 1)?.title = taken ? "Search Notes   (hotkey unavailable)" : "Search Notes   \(user.popupShortcut.display)"
+    }
+
+    /// Without this the popup silently never appears when another app owns the combination.
+    private func warnHotkeyTaken() {
+        let a = NSAlert()
+        a.messageText = "The hotkey \(user.popupShortcut.display) is already in use"
+        a.informativeText = "Another app or macOS itself has claimed it, so it can’t open NoteSleuth. Choose a different hotkey in Settings, or use the menu bar icon."
+        a.addButton(withTitle: "Open Settings")
+        a.addButton(withTitle: "Later")
+        NSApp.activate(ignoringOtherApps: true)
+        if a.runModal() == .alertFirstButtonReturn { showSettings(tab: "general") }
     }
 
     private func openNote(id: String) {
@@ -88,7 +102,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     private func setUpPanel() {
         panel = PopupPanel(contentRect: NSRect(x: 0, y: 0, width: 1100, height: 700),
-                           styleMask: [.titled, .fullSizeContentView, .nonactivatingPanel],
+                           styleMask: [.titled, .fullSizeContentView, .nonactivatingPanel, .resizable],
                            backing: .buffered, defer: true)
         panel.titleVisibility = .hidden
         panel.titlebarAppearsTransparent = true
@@ -100,8 +114,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         panel.hidesOnDeactivate = false
         panel.delegate = self
         let host = NSHostingView(rootView: PopupView(model: model, user: user, store: store))
-        host.sizingOptions = [.preferredContentSize]
+        host.sizingOptions = [.minSize]
         panel.contentView = host
+        panel.setFrameAutosaveName("popup") // remembers the size and position you drag it to
 
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] e in
             guard let self, self.panel.isKeyWindow, !ShortcutRecorder.isRecording else { return e }
@@ -116,7 +131,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private func showPopup() {
         model.prepareForShow()
         let screen = NSScreen.screens.first { $0.frame.contains(NSEvent.mouseLocation) } ?? NSScreen.main
-        if let f = screen?.visibleFrame {
+        // Keep a remembered position if it is on the screen you are using; otherwise centre there.
+        let remembered = UserDefaults.standard.string(forKey: "NSWindow Frame popup") != nil
+        if let f = screen?.visibleFrame, !(remembered && f.intersects(panel.frame)) {
             let size = panel.frame.size
             panel.setFrameOrigin(NSPoint(x: f.midX - size.width / 2, y: f.minY + f.height * 0.62 - size.height / 2))
         }

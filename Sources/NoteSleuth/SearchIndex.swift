@@ -7,15 +7,18 @@ struct Note: Identifiable, Hashable {
     let body: String
     let spans: [Span]        // body with Notes' formatting, for the preview
     let folder: String
+    var account = ""         // shown only when there is more than one
     let modified: Date
     let locked: Bool
     let inlineTags: [String] // "#tag" typed as plain text (not converted by Notes)
     var tags: [String] = []
+    let openTodo: String?    // first unticked checklist item, for `is:todo`
 
     // Search keys, precomputed once per note version.
     let titleKey: [UInt8]
     let bodyKey: [UInt8]
     let folderKey: [UInt8]
+    var accountKey: [UInt8] { Array(account.folded.utf8) }
     let words: [String]
 
     private static let nonWord = CharacterSet.alphanumerics.inverted
@@ -38,7 +41,9 @@ struct Note: Identifiable, Hashable {
         self.folder = folder
         self.modified = modified
         self.locked = locked
-        let foldedBody = body.folded
+        openTodo = body.isEmpty ? nil : Self.firstOpenTodo(spans)
+        // Link targets are searchable too (`github.com`), though they are not visible text.
+        let foldedBody = (body + " " + Set(spans.compactMap(\.style.link)).joined(separator: " ")).folded
         titleKey = Array(title.folded.utf8)
         bodyKey = Array(foldedBody.utf8)
         folderKey = Array(folder.folded.utf8)
@@ -46,6 +51,20 @@ struct Note: Identifiable, Hashable {
         let ns = body as NSString
         inlineTags = Self.tagRegex.matches(in: body, range: NSRange(location: 0, length: ns.length))
             .map { Tag.normalize(ns.substring(with: $0.range(at: 1))) }
+    }
+
+    private static func firstOpenTodo(_ spans: [Span]) -> String? {
+        var line = "", open = false
+        for s in spans {
+            for (k, part) in s.text.split(separator: "\n", omittingEmptySubsequences: false).enumerated() {
+                if k > 0 {
+                    if open, !line.trimmingCharacters(in: .whitespaces).isEmpty { return line.trimmingCharacters(in: .whitespaces) }
+                    line = ""; open = false
+                }
+                if !part.isEmpty { if line.isEmpty { open = s.style.paragraph == 103 && !s.style.checked }; line += part }
+            }
+        }
+        return open && !line.trimmingCharacters(in: .whitespaces).isEmpty ? line.trimmingCharacters(in: .whitespaces) : nil
     }
 
     static func == (a: Note, b: Note) -> Bool { a.id == b.id && a.modified == b.modified && a.tags == b.tags && a.folder == b.folder }
@@ -56,32 +75,60 @@ struct SearchOptions {
     var searchBody = true
     var typoTolerance = true
     var recencyBoost = true
+    var sortByDate = false
     var limit = 100
     var favorites: Set<String> = []
     var recent: Set<String> = []
 }
 
 /// Query syntax: words are fuzzy-matched (AND); `#a #b` = both tags; `#a|#b` = either; `-#c` = exclude;
-/// `in:work` = only folders whose name starts with "work" (several `in:` = any of them).
+/// `in:work` = only folders or accounts whose name starts with "work" (several `in:` = any of them);
+/// `"exact phrase"`; `is:todo` = notes with an unticked checklist item.
 struct Query: Equatable {
     var terms: [String] = []
+    var phrases: [String] = []
+    var todoOnly = false
     var tagGroups: [[String]] = []
     var excludedTags: [String] = []
     var folders: [String] = []
 
-    var isEmpty: Bool { terms.isEmpty && tagGroups.isEmpty && excludedTags.isEmpty && folders.isEmpty }
+    var isEmpty: Bool { terms.isEmpty && phrases.isEmpty && tagGroups.isEmpty && excludedTags.isEmpty && folders.isEmpty && !todoOnly }
     var allTags: [String] { tagGroups.flatMap { $0 } }
+    var highlights: [String] { terms + phrases }
+
+    /// Splits on whitespace, except inside double quotes (an unclosed quote runs to the end).
+    static func tokens(_ text: String) -> [(text: Substring, quoted: Bool)] {
+        var out: [(Substring, Bool)] = []
+        var i = text.startIndex
+        while i < text.endIndex {
+            if text[i].isWhitespace { i = text.index(after: i); continue }
+            var j = i, inQuote = false, quoted = false
+            while j < text.endIndex, inQuote || !text[j].isWhitespace {
+                if text[j] == "\"" { inQuote.toggle(); quoted = true }
+                j = text.index(after: j)
+            }
+            out.append((text[i..<j], quoted))
+            i = j
+        }
+        return out
+    }
 
     static func parse(_ text: String) -> Query {
         var q = Query()
-        for token in text.split(whereSeparator: \.isWhitespace) {
-            if token.hasPrefix("-#") {
+        for (raw, quoted) in tokens(text) {
+            let token = quoted ? Substring(raw.replacingOccurrences(of: "\"", with: "")) : raw
+            if token.lowercased() == "is:todo" {
+                q.todoOnly = true
+            } else if quoted, !token.lowercased().hasPrefix("in:") {
+                let p = String(token).folded.trimmingCharacters(in: .whitespaces)
+                if !p.isEmpty { q.phrases.append(p) }
+            } else if token.hasPrefix("-#") {
                 q.excludedTags += tags(in: token.dropFirst())
             } else if token.hasPrefix("#") {
                 let group = tags(in: token)
                 if !group.isEmpty { q.tagGroups.append(group) }
             } else if token.lowercased().hasPrefix("in:") {
-                let f = String(token.dropFirst(3)).folded
+                let f = String(token.dropFirst(3)).folded.trimmingCharacters(in: .whitespaces)
                 if !f.isEmpty { q.folders.append(f) }
             } else {
                 let t = String(token).folded
@@ -100,6 +147,7 @@ struct Query: Equatable {
 struct SearchIndex {
     let notes: [Note]                       // newest first
     let tagCounts: [(tag: String, count: Int)]
+    let multipleAccounts: Bool
     private let byID: [String: Int]
     private let vocab: [[UInt8]]
     private let postings: [[Int32]]
@@ -107,6 +155,7 @@ struct SearchIndex {
 
     init(notes unsorted: [Note]) {
         notes = unsorted.sorted { $0.modified > $1.modified }
+        multipleAccounts = Set(unsorted.map(\.account)).count > 1
         var wordIDs: [String: Int32] = [:]
         var vocab: [[UInt8]] = [], postings: [[Int32]] = []
         var tagPostings: [String: [Int32]] = [:]
@@ -140,7 +189,14 @@ struct SearchIndex {
         }
         if !q.folders.isEmpty {
             let prefixes = q.folders.map { Array($0.utf8) }
-            for i in 0..<n where allowed[i] && !prefixes.contains(where: notes[i].folderKey.starts) { allowed[i] = false }
+            for i in 0..<n where allowed[i] && !prefixes.contains(where: { notes[i].folderKey.starts(with: $0) || notes[i].accountKey.starts(with: $0) }) {
+                allowed[i] = false
+            }
+        }
+        if q.todoOnly { for i in 0..<n where notes[i].openTodo == nil { allowed[i] = false } }
+        let phrases = q.phrases.map { Array($0.utf8) }
+        for i in 0..<n where allowed[i] && !phrases.allSatisfy({ Self.contains(notes[i].titleKey, $0) || (o.searchBody && Self.contains(notes[i].bodyKey, $0)) }) {
+            allowed[i] = false
         }
 
         let terms = q.terms.map { Array($0.utf8) }
@@ -156,7 +212,7 @@ struct SearchIndex {
             }
         }
         return scores.indices.filter { scores[$0] >= 0 }
-            .sorted { scores[$0] != scores[$1] ? scores[$0] > scores[$1] : $0 < $1 }
+            .sorted { !o.sortByDate && scores[$0] != scores[$1] ? scores[$0] > scores[$1] : $0 < $1 } // index order = newest first
             .prefix(o.limit).map { notes[$0] }
     }
 

@@ -4,9 +4,18 @@ A fast, keyboard-driven menu-bar search for **Apple Notes** on macOS 14+ (Apple 
 
 <img src="Support/icon.png" width="128" alt="NoteSleuth icon">
 
+![Searching notes with a formatted preview](Support/screenshot-search.png)
+
+![Browsing hashtags](Support/screenshot-tags.png)
+
 - **Instant fuzzy search** over titles, folders and note bodies: prefix matching, one-typo tolerance, fuzzy title matching. Searches run in parallel across all CPU cores (~20 ms for 10,000 notes).
 - **Hashtags**: `#work #urgent` (both), `#work|#home` (either), `-#archive` (exclude). Press ⇥ to autocomplete tags.
-- **Folder filter**: `in:work` limits results to folders whose name starts with "work".
+- **Exact phrases**: `"project plan"` matches those words together, in that order.
+- **Folder and account filter**: `in:work` limits results to folders or accounts whose name starts with "work"; `in:"my folder"` for names with spaces.
+- **To-dos**: `is:todo` finds notes that still have an unticked checklist item.
+- **Tables and links**: text inside tables is searchable, and so are link addresses (`github.com`).
+- **Tag browser** (⌘4): every hashtag with its note count.
+- **Jump to the match**: the preview scrolls to the first matching line; ⌘G / ⇧⌘G step through the rest.
 - **Live index** that stays in sync. It watches the Notes database with FSEvents, re-reads only the notes that changed, and is throttled so it stays idle when nothing changes.
 - **Popup on a global hotkey** (default ⌥Space, configurable), with a preview pane that highlights matches.
 - **Favourites** (⌘D), **recently opened** notes, **recent hashtags**, **bookmarked searches** (⌘S).
@@ -20,7 +29,17 @@ Your notes never leave your Mac. NoteSleuth opens the Notes database read-only a
 
 ## Install
 
-Download `NoteSleuth-<version>.dmg` from [Releases](https://github.com/giridharmb/NoteSleuth/releases), open it and drag **NoteSleuth** to **Applications**. The app is signed with Developer ID and notarized by Apple.
+With Homebrew:
+
+```bash
+brew tap giridharmb/notesleuth https://github.com/giridharmb/NoteSleuth
+```
+
+```bash
+brew install --cask notesleuth
+```
+
+Or download `NoteSleuth-<version>.dmg` from [Releases](https://github.com/giridharmb/NoteSleuth/releases), open it and drag **NoteSleuth** to **Applications**. The app is signed with Developer ID and notarized by Apple.
 
 On first launch, a welcome window walks you through granting **Full Disk Access** (see [Permissions](#permissions)). Updates install automatically, or use **Check for Updates…** in the menu bar menu.
 
@@ -59,7 +78,11 @@ If an *Apple Development* or *Developer ID* certificate is in your keychain, the
 | ⇥ | Complete `#tag` |
 | ⌘D | Toggle favourite |
 | ⌘S | Bookmark current search |
-| ⌘1 / ⌘2 / ⌘3 | Recent / Favourites / All notes |
+| ⌘L | Copy a link to the note |
+| ⌘R | Switch between best match and newest first |
+| ⌘G / ⇧⌘G | Next / previous matching line in the preview |
+| ↑ in an empty search box | Recall earlier searches |
+| ⌘1 / ⌘2 / ⌘3 / ⌘4 | Recent / Favourites / All notes / Tags |
 | ⎋ | Clear search, then close |
 | ⌘, | Settings |
 
@@ -69,7 +92,9 @@ If an *Apple Development* or *Developer ID* certificate is in your keychain, the
 
 The index lives **in memory only**. Writing note contents to a cache file would expose them to apps that don't have Full Disk Access. Favourites, history, bookmarks and hotkeys are stored in UserDefaults as note IDs only.
 
-Limitations: the contents of locked (password-protected) notes are encrypted, so only their titles are searchable. The app never edits notes.
+The popup can be resized and moved; it remembers both. Folders listed under **Settings → Index → Folders to leave out** are never indexed.
+
+Limitations: table cells are searchable but shown as a flat list, not a grid. The contents of locked (password-protected) notes are encrypted, so only their titles are searchable. The app never edits notes.
 
 ## License
 

@@ -9,6 +9,15 @@ enum NoteFormatter {
 
     /// `skipTitle`: drop the first line when it repeats the title already shown above the preview.
     static func render(_ spans: [Span], highlight terms: [String], skipTitle: String? = nil, limit: Int = 30_000) -> AttributedString {
+        let lines = renderLines(spans, highlight: terms, skipTitle: skipTitle, limit: limit)
+        return lines.enumerated().reduce(into: AttributedString()) { out, l in
+            out += l.element.text
+            if l.offset < lines.count - 1 { out += AttributedString("\n") }
+        }
+    }
+
+    /// One entry per line, so the preview can scroll to the lines that contain a search term (`hit`).
+    static func renderLines(_ spans: [Span], highlight terms: [String], skipTitle: String? = nil, limit: Int = 30_000) -> [(text: AttributedString, hit: Bool)] {
         var lines = [Line()]
         var used = 0
         for span in spans where used < limit {
@@ -26,9 +35,9 @@ enum NoteFormatter {
            lines[0].spans.map(\.text).joined().trimmingCharacters(in: .whitespaces) == skipTitle {
             lines.removeFirst()
         }
-        var out = AttributedString()
+        var out: [(text: AttributedString, hit: Bool)] = []
         var numbers: [Int: Int] = [:] // indent level → current number in a numbered list
-        for (i, line) in lines.enumerated() {
+        for line in lines {
             let p = line.para ?? TextStyle()
             if p.paragraph == 102 {
                 numbers = numbers.filter { $0.key <= p.indent }
@@ -61,10 +70,9 @@ enum NoteFormatter {
                 }
                 a += piece
             }
-            if i < lines.count - 1 { a += AttributedString("\n") }
-            out += a
+            let hit = highlight(&a, terms)
+            out.append((a, hit))
         }
-        highlight(&out, terms)
         return out
     }
 
@@ -82,7 +90,8 @@ enum NoteFormatter {
         return s.italic ? f.italic() : f
     }
 
-    private static func highlight(_ out: inout AttributedString, _ terms: [String]) {
+    @discardableResult
+    private static func highlight(_ out: inout AttributedString, _ terms: [String]) -> Bool {
         let s = String(out.characters) as NSString
         var marks = 0
         for term in terms where !term.isEmpty {
@@ -95,5 +104,6 @@ enum NoteFormatter {
                 r = NSRange(location: f.upperBound, length: s.length - f.upperBound)
             }
         }
+        return marks > 0
     }
 }

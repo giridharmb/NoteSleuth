@@ -28,6 +28,8 @@ if [ -n "${NOTARY_PROFILE:-}" ]; then
   .build/artifacts/sparkle/Sparkle/bin/generate_appcast --account QuickNoteSearch --maximum-deltas 0 \
     --download-url-prefix "https://github.com/giridharmb/NoteSleuth/releases/download/v$VERSION/" -o appcast.xml "$FEED"
   rm -rf "$FEED"
+  # Homebrew cask: point it at this release.
+  sed -i '' -e "s/^  version \".*\"/  version \"$VERSION\"/" -e "s/^  sha256 \".*\"/  sha256 \"$(shasum -a 256 "$DMG" | cut -d' ' -f1)\"/" Casks/notesleuth.rb
 fi
 
 codesign --verify --strict "$DMG"

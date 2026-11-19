@@ -58,7 +58,15 @@ final class NotesReader {
     /// Opening the file is the only reliable Full Disk Access check (TCC denies open, not stat).
     static var hasAccess: Bool { FileHandle(forReadingAtPath: path) != nil }
 
-    struct Stamp: Equatable { let modified: Double; let folder: String }
+    /// True when we may look but there is nothing there: Notes has never been opened on this Mac.
+    /// (Without Full Disk Access the open fails with EPERM, not ENOENT.)
+    static var databaseMissing: Bool {
+        let fd = open(path, O_RDONLY)
+        if fd >= 0 { close(fd); return false }
+        return errno == ENOENT
+    }
+
+    struct Stamp: Equatable { let modified: Double; let folder: String; var account = "" }
 
     struct RawNote {
         let pk: Int64
@@ -93,14 +101,24 @@ final class NotesReader {
     func stamps() throws -> [Int64: Stamp] {
         var out: [Int64: Stamp] = [:]
         let sql = """
-            SELECT n.Z_PK, n.\(col("ZMODIFICATIONDATE1")), f.\(col("ZTITLE2"))
+            SELECT n.Z_PK, n.\(col("ZMODIFICATIONDATE1")), f.\(col("ZTITLE2")), a.\(col("ZNAME"))
             FROM ZICCLOUDSYNCINGOBJECT n LEFT JOIN ZICCLOUDSYNCINGOBJECT f ON f.Z_PK = n.\(col("ZFOLDER"))
+              LEFT JOIN ZICCLOUDSYNCINGOBJECT a ON a.Z_PK = \(accountColumn)
             WHERE n.Z_ENT = \(noteEntity)
               AND IFNULL(n.\(col("ZMARKEDFORDELETION")), 0) = 0
               AND IFNULL(f.\(col("ZFOLDERTYPE")), 0) != 1
             """ // ZFOLDERTYPE 1 = "Recently Deleted"
-        try db.rows(sql) { out[$0.int(0)] = Stamp(modified: $0.double(1), folder: $0.string(2) ?? "Notes") }
+        try db.rows(sql) {
+            out[$0.int(0)] = Stamp(modified: $0.double(1), folder: $0.string(2) ?? "Notes", account: $0.string(3) ?? "")
+        }
         return out
+    }
+
+    /// The note→account column is numbered differently per macOS version (ZACCOUNT2, ZACCOUNT7, …);
+    /// only the right one is non-null on a note row.
+    private var accountColumn: String {
+        let cols = columns.filter { $0.range(of: "^ZACCOUNT[0-9]*$", options: .regularExpression) != nil }.sorted()
+        return cols.isEmpty ? "NULL" : "COALESCE(" + (cols.map { "n." + $0 } + ["NULL"]).joined(separator: ", ") + ")"
     }
 
     func notes(_ pks: [Int64]) throws -> [RawNote] {
@@ -126,6 +144,26 @@ final class NotesReader {
         var out: [String: String] = [:]
         try db.rows("SELECT ZIDENTIFIER, ZALTTEXT FROM ZICCLOUDSYNCINGOBJECT WHERE ZALTTEXT IS NOT NULL AND ZIDENTIFIER IS NOT NULL") {
             if let id = $0.string(0), let alt = $0.string(1) { out[id] = alt }
+        }
+        for (id, cells) in try tables() { out[id] = "▦ " + cells.joined(separator: " · ") }
+        return out
+    }
+
+    /// Cell texts of each table attachment, keyed by attachment identifier. Tables are CRDT blobs:
+    /// MergableDataProto(2) → object(3) → entries(3) → Note(10).text(2). Cell order is not reconstructed.
+    func tables() throws -> [String: [String]] {
+        let blobs = ["ZMERGEABLEDATA1", "ZMERGEABLEDATA"].filter(columns.contains)
+        guard !blobs.isEmpty, ["ZTYPEUTI", "ZIDENTIFIER"].allSatisfy(columns.contains) else { return [:] }
+        var out: [String: [String]] = [:]
+        try db.rows("""
+            SELECT ZIDENTIFIER, COALESCE(\(blobs.joined(separator: ", ")), NULL) FROM ZICCLOUDSYNCINGOBJECT
+            WHERE ZTYPEUTI = 'com.apple.notes.table' AND ZIDENTIFIER IS NOT NULL
+            """) { row in
+            guard let id = row.string(0), let data = row.data(1), let raw = NoteDecoder.decompress([UInt8](data)),
+                  let entries = Proto(raw)?.message(2)?.message(3)?.bytes[3] else { return }
+            let cells = entries.compactMap { Proto($0)?.message(10)?.string(2)?.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty }
+            if !cells.isEmpty { out[id] = cells }
         }
         return out
     }
@@ -171,9 +209,7 @@ enum NoteDecoder {
 
     /// `altText` maps inline-attachment identifiers (hashtags, mentions) to their visible text.
     static func spans(from data: Data, altText: [String: String]) -> [Span]? {
-        let bytes = [UInt8](data)
-        let isZlib = bytes.count > 6 && bytes[0] == 0x78 && (Int(bytes[0]) << 8 | Int(bytes[1])) % 31 == 0
-        guard let raw = bytes.starts(with: [0x1f, 0x8b]) ? gunzip(bytes) : isZlib ? inflate(bytes[2..<(bytes.count - 4)]) : bytes,
+        guard let raw = decompress([UInt8](data)),
               let note = Proto(raw)?.message(2)?.message(3), let textBytes = note.bytes[2]?.first
         else { return nil }
         let text = String(decoding: textBytes, as: UTF8.self) as NSString
@@ -201,6 +237,7 @@ enum NoteDecoder {
                 let uti = info.string(2) ?? ""
                 if let alt = info.string(1).flatMap({ altText[$0] }) {
                     piece = piece.replacingOccurrences(of: "\u{FFFC}", with: alt)
+                    style.attachment = !uti.contains("inlinetextattachment") // table text
                 } else if !uti.contains("inlinetextattachment") {
                     piece = piece.replacingOccurrences(of: "\u{FFFC}", with: placeholder(uti))
                     style.attachment = true
@@ -223,6 +260,12 @@ enum NoteDecoder {
         case let u where u.contains("audio") || u.contains("movie") || u.contains("video"): return "[🎞 Media]"
         default: return "[📎 Attachment]"
         }
+    }
+
+    /// gzip, zlib (older notes) or already-plain bytes.
+    static func decompress(_ bytes: [UInt8]) -> [UInt8]? {
+        let isZlib = bytes.count > 6 && bytes[0] == 0x78 && (Int(bytes[0]) << 8 | Int(bytes[1])) % 31 == 0
+        return bytes.starts(with: [0x1f, 0x8b]) ? gunzip(bytes) : isZlib ? inflate(bytes[2..<(bytes.count - 4)]) : bytes
     }
 
     static func gunzip(_ b: [UInt8]) -> [UInt8]? {

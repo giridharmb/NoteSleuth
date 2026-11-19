@@ -10,6 +10,8 @@ enum Pref {
     static let clearOnOpen = "clearOnOpen"
     static let defaultTab = "defaultTab"
     static let resyncMinutes = "resyncMinutes"
+    static let sortByDate = "sortByDate"
+    static let excludedFolders = "excludedFolders" // comma-separated folder-name prefixes kept out of the index
 
     static func registerDefaults() {
         UserDefaults.standard.register(defaults: [
@@ -50,6 +52,7 @@ final class UserStore: ObservableObject {
     @Published var savedSearches: [SavedSearch] { didSet { save("savedSearches", savedSearches) } }
     @Published var noteHotkeys: [NoteHotkey] { didSet { save("noteHotkeys", noteHotkeys) } }
     @Published var popupShortcut: Shortcut { didSet { save("popupShortcut", popupShortcut) } }
+    @Published var recentQueries: [String] { didSet { save("recentQueries", recentQueries) } }
 
     private init() {
         favorites = Self.load("favorites") ?? []
@@ -58,6 +61,15 @@ final class UserStore: ObservableObject {
         savedSearches = Self.load("savedSearches") ?? []
         noteHotkeys = Self.load("noteHotkeys") ?? []
         popupShortcut = Self.load("popupShortcut") ?? .defaultPopup
+        recentQueries = Self.load("recentQueries") ?? []
+    }
+
+    func recordQuery(_ q: String) {
+        let q = q.trimmingCharacters(in: .whitespaces)
+        guard !q.isEmpty else { return }
+        recentQueries.removeAll { $0 == q }
+        recentQueries.insert(q, at: 0)
+        if recentQueries.count > 20 { recentQueries.removeLast(recentQueries.count - 20) }
     }
 
     func isFavorite(_ id: String) -> Bool { favorites.contains(id) }
